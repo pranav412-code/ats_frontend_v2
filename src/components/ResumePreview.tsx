@@ -1,11 +1,11 @@
 import React from 'react';
 import { useResumeStore } from '../store/useResumeStore';
 import { InlineEditableText } from './InlineEditableText';
-import { Plus, GripVertical, X } from 'lucide-react';
+import { Plus, GripVertical, X, Trash2 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 
 export function ResumePreview() {
-  const { resumeData, updateResumeField, addBullet, deleteBullet, addSection, reorderSections } = useResumeStore();
+  const { resumeData, updateResumeField, addBullet, deleteBullet, addSection, removeSection, removeItem, reorderSections } = useResumeStore();
 
   if (!resumeData) return null;
 
@@ -138,6 +138,14 @@ export function ResumePreview() {
                         >
                           <GripVertical size={16} />
                         </div>
+                        
+                        <button
+                          onClick={() => removeSection(sectionId)}
+                          className="absolute -right-6 top-1 p-1 opacity-0 group-hover/section:opacity-100 transition-opacity cursor-pointer text-zinc-400 hover:text-red-500"
+                          title="Delete section"
+                        >
+                          <Trash2 size={16} />
+                        </button>
 
                         {sectionId === 'summary' && (
                           <div className="font-sans">
@@ -158,6 +166,13 @@ export function ResumePreview() {
                             <div className="space-y-6">
                               {experience.map((exp, expIndex) => (
                                 <div key={exp.id} className="group/item relative">
+                                  <button
+                                    onClick={() => removeItem('experience', expIndex)}
+                                    className="absolute -right-6 top-1 opacity-0 group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
+                                    title="Delete job"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
                                   <div className="flex justify-between items-baseline mb-1">
                                     <InlineEditableText
                                       value={exp.role}
@@ -216,6 +231,13 @@ export function ResumePreview() {
                             <div className="space-y-4">
                               {education.map((edu, eduIndex) => (
                                 <div key={edu.id} className="group/item relative">
+                                  <button
+                                    onClick={() => removeItem('education', eduIndex)}
+                                    className="absolute -right-6 top-1 opacity-0 group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
+                                    title="Delete school"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
                                   <div className="flex justify-between items-baseline">
                                     <InlineEditableText
                                       value={edu.degree}
@@ -254,6 +276,13 @@ export function ResumePreview() {
                             <div className="space-y-6">
                               {customSection.items.map((item, itemIndex) => (
                                 <div key={item.id} className="group/item relative">
+                                  <button
+                                    onClick={() => removeItem('customSections', itemIndex, customSectionIndex)}
+                                    className="absolute -right-6 top-1 opacity-0 group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
+                                    title="Delete item"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
                                   <div className="flex justify-between items-baseline mb-1">
                                     <InlineEditableText
                                       value={item.title}
@@ -310,7 +339,7 @@ export function ResumePreview() {
                             <h3 className="text-xs font-bold uppercase tracking-wider mb-3 border-b border-zinc-200 dark:border-zinc-800 pb-1">Skills</h3>
                             <div className="flex flex-wrap gap-2">
                               {skills.map((skill, skillIndex) => (
-                                <div key={skillIndex} className="inline-flex group/skill relative">
+                                <div key={skillIndex} className="inline-flex group/skill relative pr-4">
                                   <InlineEditableText
                                     value={skill}
                                     onSave={(v) => {
@@ -321,6 +350,13 @@ export function ResumePreview() {
                                     className="text-sm bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 rounded-md text-zinc-700 dark:text-zinc-300 border-none"
                                     placeholder="Skill"
                                   />
+                                  <button
+                                    onClick={() => removeItem('skills', skillIndex)}
+                                    className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover/skill:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity"
+                                    title="Remove"
+                                  >
+                                    <X size={12} />
+                                  </button>
                                 </div>
                               ))}
                             </div>
@@ -343,6 +379,7 @@ export function ResumePreview() {
       <div className="sticky bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white to-transparent dark:from-zinc-900 dark:via-zinc-900 pt-10 pb-4 mt-8 flex justify-center border-t-0 pointer-events-none">
         <div className="bg-white dark:bg-zinc-800 shadow-md border border-zinc-200 dark:border-zinc-700 rounded-full px-2 py-1 flex items-center space-x-1 pointer-events-auto">
           <span className="text-xs font-medium text-zinc-500 px-3 uppercase tracking-wider">Add</span>
+          <button onClick={() => addSection('summary')} className="px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-full transition-colors">Summary</button>
           <button onClick={() => addSection('experience')} className="px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-full transition-colors">Experience</button>
           <button onClick={() => addSection('education')} className="px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-full transition-colors">Education</button>
           <button onClick={() => addSection('skills')} className="px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-full transition-colors">Skills</button>

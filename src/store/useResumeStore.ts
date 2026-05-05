@@ -79,6 +79,8 @@ interface ResumeStore {
   addBullet: (sectionType: string, sectionIndex: number, customItemIndex?: number) => void;
   deleteBullet: (sectionType: string, sectionIndex: number, bulletIndex: number, customItemIndex?: number) => void;
   addSection: (type: string) => void;
+  removeSection: (sectionId: string) => void;
+  removeItem: (sectionType: string, itemIndex: number, customSectionIndex?: number) => void;
   reorderSections: (startIndex: number, endIndex: number) => void;
   startOptimization: () => void;
   completeOptimization: (optimizedData: ResumeData, newScore: number) => void;
@@ -264,11 +266,22 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       
       const newData = JSON.parse(JSON.stringify(state.resumeData));
       
-      if (type === 'experience') {
+      if (!newData.sectionOrder) {
+        newData.sectionOrder = ['summary', 'experience', 'education'];
+        if (newData.customSections) newData.sectionOrder.push(...newData.customSections.map((s: any) => s.id));
+        newData.sectionOrder.push('skills');
+      }
+
+      if (type === 'summary') {
+        if (!newData.sectionOrder.includes('summary')) newData.sectionOrder.unshift('summary');
+      } else if (type === 'experience') {
+        if (!newData.sectionOrder.includes('experience')) newData.sectionOrder.push('experience');
         newData.experience.push({ id: generateId(), role: "New Role", company: "Company", date: "Date", bullets: [""] });
       } else if (type === 'education') {
+        if (!newData.sectionOrder.includes('education')) newData.sectionOrder.push('education');
         newData.education.push({ id: generateId(), degree: "Degree", school: "School", date: "Date" });
       } else if (type === 'skills') {
+        if (!newData.sectionOrder.includes('skills')) newData.sectionOrder.push('skills');
         newData.skills.push("New Skill");
       } else if (type === 'custom') {
         if (!newData.customSections) newData.customSections = [];
@@ -284,14 +297,11 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
             bullets: [""]
           }]
         });
-        if (newData.sectionOrder) {
-          // insert it before 'skills' if skills is at the end, else push
-          const skillsIdx = newData.sectionOrder.indexOf('skills');
-          if (skillsIdx >= 0) {
-            newData.sectionOrder.splice(skillsIdx, 0, customId);
-          } else {
-            newData.sectionOrder.push(customId);
-          }
+        const skillsIdx = newData.sectionOrder.indexOf('skills');
+        if (skillsIdx >= 0) {
+          newData.sectionOrder.splice(skillsIdx, 0, customId);
+        } else {
+          newData.sectionOrder.push(customId);
         }
       }
       
@@ -301,6 +311,42 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
           : r
       );
       
+      return { resumeData: newData, resumes: updatedResumes };
+    });
+  },
+
+  removeSection: (sectionId) => {
+    set((state) => {
+      if (!state.resumeData || !state.currentResumeId) return state;
+      const newData = JSON.parse(JSON.stringify(state.resumeData));
+      
+      if (newData.sectionOrder) {
+        newData.sectionOrder = newData.sectionOrder.filter((id: string) => id !== sectionId);
+      }
+      
+      const updatedResumes = state.resumes.map(r => 
+        r.id === state.currentResumeId ? { ...r, data: newData, lastUpdated: Date.now() } : r
+      );
+      return { resumeData: newData, resumes: updatedResumes };
+    });
+  },
+
+  removeItem: (sectionType, itemIndex, customSectionIndex) => {
+    set((state) => {
+      if (!state.resumeData || !state.currentResumeId) return state;
+      const newData = JSON.parse(JSON.stringify(state.resumeData));
+      
+      if (sectionType === 'customSections' && typeof customSectionIndex === 'number') {
+        if (newData.customSections?.[customSectionIndex]?.items) {
+          newData.customSections[customSectionIndex].items.splice(itemIndex, 1);
+        }
+      } else if (newData[sectionType] && Array.isArray(newData[sectionType])) {
+        newData[sectionType].splice(itemIndex, 1);
+      }
+
+      const updatedResumes = state.resumes.map(r => 
+        r.id === state.currentResumeId ? { ...r, data: newData, lastUpdated: Date.now() } : r
+      );
       return { resumeData: newData, resumes: updatedResumes };
     });
   },
