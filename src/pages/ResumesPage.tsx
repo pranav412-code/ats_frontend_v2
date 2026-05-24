@@ -1,121 +1,142 @@
 import React from 'react';
-import { useResumeStore, Resume } from '../store/useResumeStore';
-import { FileText, Plus, ArrowRight, Trash2, Clock, Files } from 'lucide-react';
+import { useResumeStore } from '../store/useResumeStore';
+import { FileText, Plus, ArrowRight, Trash2, Files } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { mockResumeData } from '../store/useResumeStore';
 
 export function ResumesPage() {
-  const { resumes, openResume, deleteResume, createResume, uploadResume, goToUpload } = useResumeStore();
+  const { resumes, openResume, deleteResume, createResume, goToUpload } = useResumeStore();
 
-  const handleCreateNew = () => {
-    createResume();
-  };
+  const handleCreateNew = () => createResume();
+  const handleUploadResume = () => goToUpload();
 
-  const handleUploadResume = () => {
-    goToUpload();
-  };
+  const scoredResumes = resumes.filter(r => typeof r.latestScore === 'number' && r.latestScore !== null);
+  const totalResumes = resumes.length;
+  const averageScore = scoredResumes.length > 0
+    ? Math.round(scoredResumes.reduce((sum, r) => sum + (r.latestScore || 0), 0) / scoredResumes.length)
+    : 0;
+  const highestScore = scoredResumes.length > 0
+    ? Math.max(...scoredResumes.map(r => r.latestScore || 0))
+    : 0;
+  const optimizedCount = scoredResumes.length;
 
-  const handleUploadSample = () => {
-    uploadResume(mockResumeData, 'Alex_Designer_Resume');
-  };
+  const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: '2-digit' });
 
   return (
-    <div className="w-full flex flex-col pt-8 pb-16">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 mb-2">My Resumes</h1>
-          <p className="text-zinc-500 dark:text-zinc-400">View and manage your optimized resumes.</p>
+    <div className="w-full px-6 lg:px-10 pt-6 pb-16">
+      {/* Masthead */}
+      <div className="flex items-center justify-between border-b border-zinc-300 dark:border-zinc-700 pb-3 mb-8 text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">
+        <span>Issue 01 · Resume Lab</span>
+        <span className="hidden sm:inline">{today}</span>
+        <span>Section · Library</span>
+      </div>
+
+      {/* Page header */}
+      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 pb-6 mb-8 border-b border-zinc-300 dark:border-zinc-700">
+        <div className="flex-1">
+          <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 mb-3">⟶ The Library</p>
+          <h1 className="font-serif text-5xl sm:text-6xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 leading-[0.95]">
+            My
+            <span className="italic font-normal text-zinc-700 dark:text-zinc-300"> Resumes</span>
+          </h1>
+          <p className="font-serif italic text-base text-zinc-600 dark:text-zinc-400 mt-3 max-w-xl">
+            Your collected drafts — view, optimize, and refine.
+          </p>
         </div>
-        <div className="flex items-center gap-3">
-          <button 
+        <div className="flex items-center gap-3 shrink-0">
+          <button
             onClick={handleUploadResume}
-            className="hidden sm:flex items-center justify-center px-4 py-2 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-lg font-medium shadow-sm hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-all text-sm"
+            className="hidden sm:inline-flex items-center justify-center px-5 py-2.5 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-900 dark:border-zinc-100 font-mono uppercase tracking-widest text-[11px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
           >
             Upload Resume
           </button>
-          <button 
+          <button
             onClick={handleCreateNew}
-            className="flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium shadow-sm shadow-blue-500/20 transition-all text-sm"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-[11px] font-bold transition-colors"
           >
-            <Plus size={16} className="mr-2" />
+            <Plus size={13} strokeWidth={2.5} />
             New Resume
           </button>
         </div>
       </div>
 
+      {/* Stats strip */}
+
+
       {resumes.length === 0 ? (
-        <div className="flex flex-col items-center justify-center min-h-[40vh] border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-2xl p-8 bg-zinc-50 dark:bg-zinc-900/30 text-center">
-          <div className="w-16 h-16 rounded-full bg-white dark:bg-zinc-800 shadow-sm flex items-center justify-center mb-6 text-zinc-400 dark:text-zinc-500">
-            <Files size={32} strokeWidth={1.5} />
-          </div>
-          <h3 className="text-xl font-medium text-zinc-900 dark:text-zinc-100 mb-2">No resumes yet</h3>
-          <p className="text-zinc-500 dark:text-zinc-400 max-w-sm mb-6">
-            Create a new empty resume or upload an existing one to get started with the AI Optimizer.
+        <div className="flex flex-col items-center justify-center min-h-[45vh] border border-dashed border-zinc-400 dark:border-zinc-700 bg-white/40 dark:bg-zinc-900/30 px-8 py-16 text-center">
+          <Files size={32} strokeWidth={1.5} className="text-zinc-700 dark:text-zinc-300 mb-4" />
+          <h3 className="font-serif text-3xl font-bold text-zinc-900 dark:text-zinc-50 mb-2">
+            No resumes <span className="italic font-normal text-zinc-700 dark:text-zinc-300">yet</span>
+          </h3>
+          <p className="font-serif italic text-base text-zinc-500 dark:text-zinc-400 max-w-md mb-8">
+            Begin by uploading a draft or creating a blank canvas.
           </p>
-          <div className="flex gap-4">
-            <button 
+          <div className="flex gap-3">
+            <button
               onClick={handleCreateNew}
-              className="flex items-center justify-center px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-sm transition-all"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-[11px] font-bold transition-colors"
             >
+              <Plus size={13} strokeWidth={2.5} />
               Create New
             </button>
-            <button 
+            <button
               onClick={handleUploadResume}
-              className="flex items-center justify-center px-5 py-2.5 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 text-zinc-700 dark:text-zinc-200 rounded-xl font-medium transition-all"
+              className="inline-flex items-center px-6 py-3 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-900 dark:border-zinc-100 font-mono uppercase tracking-widest text-[11px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
             >
               Upload Resume
             </button>
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {resumes.map(resume => (
-            <div key={resume.id} className="group flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-              <div 
-                className="p-6 cursor-pointer flex-1"
-                onClick={() => openResume(resume.id)}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-0 border-t border-l border-zinc-300 dark:border-zinc-700">
+          {resumes.map(resume => {
+            return (
+              <div
+                key={resume.id}
+                className="group relative flex flex-col border-r border-b border-zinc-300 dark:border-zinc-700 bg-white/60 dark:bg-zinc-900/40 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
               >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-xl">
-                    <FileText size={24} />
-                  </div>
-                  {resume.latestScore && (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-sm font-medium">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                      {resume.latestScore} score
-                    </div>
-                  )}
-                </div>
-                
-                <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-1 truncate">
-                  {resume.title}
-                </h3>
-                <div className="flex items-center text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-                  <Clock size={14} className="mr-1.5" />
-                  Updated {new Date(resume.lastUpdated).toLocaleDateString()}
-                </div>
-              </div>
-              
-              <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
-                <button 
+                <div
+                  className="p-6 cursor-pointer flex-1"
                   onClick={() => openResume(resume.id)}
-                  className="text-sm font-medium text-blue-600 dark:text-blue-400 flex items-center hover:underline"
                 >
-                  Open Editor <ArrowRight size={14} className="ml-1" />
-                </button>
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteResume(resume.id);
-                  }}
-                  className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
-                  title="Delete Resume"
-                >
-                  <Trash2 size={16} />
-                </button>
+                  <div className="flex items-start justify-between mb-6">
+                    <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-zinc-500">
+                      <FileText size={12} />
+                      <span>Draft</span>
+                    </div>
+                  </div>
+
+                  <h3 className="font-serif text-2xl font-bold text-zinc-900 dark:text-zinc-50 mb-2 leading-tight line-clamp-2 group-hover:italic transition-all">
+                    {resume.title}
+                  </h3>
+                  <p className="font-serif italic text-sm text-zinc-500 dark:text-zinc-500">
+                    Updated {new Date(resume.lastUpdated).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </p>
+                </div>
+
+                <div className="px-6 py-3 border-t border-zinc-300 dark:border-zinc-700 flex items-center justify-between">
+                  <button
+                    onClick={() => openResume(resume.id)}
+                    className="text-[11px] font-mono uppercase tracking-widest font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5 hover:gap-2.5 transition-all"
+                  >
+                    Open Editor
+                    <ArrowRight size={13} />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteResume(resume.id);
+                    }}
+                    className="p-1.5 text-zinc-500 hover:text-rose-600 transition-colors"
+                    title="Delete Resume"
+                    aria-label="Delete Resume"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

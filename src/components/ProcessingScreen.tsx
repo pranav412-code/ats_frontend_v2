@@ -1,104 +1,254 @@
-import React, { useEffect, useState } from 'react';
-import { useResumeStore } from '../store/useResumeStore';
-import { Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import React, { useEffect, useReducer, useRef, useState } from 'react';
+import { useResumeStore, convertToBackend, convertToFrontend } from '../store/useResumeStore';
+import { AlertCircle, ArrowLeft } from 'lucide-react';
+import {
+  initialViewState,
+  reduceView,
+  type ViewState,
+  type SseEvent,
+  STAGE_LABELS,
+  visibleStages,
+} from '../lib/optimizationPhase';
+import { ScoreRing } from './optimization/ScoreRing';
+import { StageStepper } from './optimization/StageStepper';
+import { StageCard } from './optimization/StageCard';
+import { ReassurancePhrase } from './optimization/ReassurancePhrase';
+import { ElapsedPill } from './optimization/ElapsedPill';
+import { DetailsDrawer } from './optimization/DetailsDrawer';
+import { CancelConfirmModal } from './optimization/CancelConfirmModal';
 
-const steps = [
-  "Analyzing resume structure...",
-  "Evaluating keyword density...",
-  "Enhancing impact verbs...",
-  "Quantifying achievements...",
-  "Finalizing formatting..."
-];
+const TARGET_SCORE = 85;
+
+function viewReducer(state: ViewState, event: SseEvent): ViewState {
+  return reduceView(state, event);
+}
 
 export function ProcessingScreen() {
-  const { resumeData, completeOptimization, resumes, currentResumeId } = useResumeStore();
-  const [currentStep, setCurrentStep] = useState(0);
-  
+  const {
+    resumeData,
+    completeOptimization,
+    currentResumeId,
+    jdText,
+    optimizationMode,
+    setAppState,
+    recordIterationStep,
+  } = useResumeStore();
+
+  const mode = (optimizationMode as 'quick' | 'balanced' | 'deep') || 'balanced';
+  const [view, dispatch] = useReducer(viewReducer, mode, initialViewState);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Cleanup on unmount + new currentResumeId.
   useEffect(() => {
     if (!resumeData) return;
-    
-    // Animate through steps
-    const stepInterval = setInterval(() => {
-      setCurrentStep((prev) => {
-        if (prev >= steps.length - 1) {
-          clearInterval(stepInterval);
-          return prev;
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const run = async () => {
+      const payload = {
+        token: 'local',
+        resume_json: convertToBackend(resumeData),
+        resume_id: currentResumeId,
+        jd_text: jdText || '',
+        target_score: TARGET_SCORE,
+        max_iterations: mode === 'quick' ? 1 : mode === 'deep' ? 3 : 2,
+        mode,
+      };
+
+      try {
+        const res = await fetch('http://localhost:8000/api/v1/optimize/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        let completePayload: any = null;
+        const startedAt = Date.now();
+
+        // Capture per-iteration deltas from log strings as fallback when
+        // the (planned) `iteration_complete` SSE event isn't emitted.
+        const iterRegex = /Score improved:\s*(\d+)\s*[→\-]>?\s*(\d+)\s*\(\+(\d+)\)/i;
+        let lastIterFromLog = 0;
+        let lastScoreFromLog: number | null = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const rawEvent = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            for (const line of rawEvent.split('\n')) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const parsed = JSON.parse(line.slice(6)) as any;
+                  dispatch(parsed);
+                  if (parsed.type === 'complete') {
+                    parsed._startedAt = startedAt;
+                    completePayload = parsed;
+                  } else if (parsed.type === 'iteration_complete') {
+                    recordIterationStep({
+                      iteration: parsed.iteration,
+                      scoreBefore: parsed.score_before,
+                      scoreAfter: parsed.score_after,
+                      delta: parsed.delta,
+                    });
+                  } else if (parsed.type === 'log' && typeof parsed.message === 'string') {
+                    const m = parsed.message.match(iterRegex);
+                    if (m) {
+                      const before = parseInt(m[1], 10);
+                      const after = parseInt(m[2], 10);
+                      const delta = parseInt(m[3], 10);
+                      lastIterFromLog += 1;
+                      recordIterationStep({
+                        iteration: parsed.iteration ?? lastIterFromLog,
+                        scoreBefore: before,
+                        scoreAfter: after,
+                        delta,
+                      });
+                      lastScoreFromLog = after;
+                    }
+                  }
+                } catch {
+                  /* malformed */
+                }
+              }
+            }
+          }
         }
-        return prev + 1;
-      });
-    }, 800);
-    
-    // Complete optimization after all steps
-    const completionTimer = setTimeout(() => {
-      // Create a slightly modified optimized resume
-      const optimizedResume = JSON.parse(JSON.stringify(resumeData));
-      
-      // Simulate optimizations
-      if (optimizedResume.experience && optimizedResume.experience.length > 0) {
-        if (!optimizedResume.experience[0].bullets) optimizedResume.experience[0].bullets = [];
-        if (optimizedResume.experience[0].bullets.length > 0) {
-           optimizedResume.experience[0].bullets[0] = "Spearheaded the redesign of the core product dashboard, driving a 15% increase in user retention through intuitive UX and streamlined navigation.";
+
+        if (completePayload) {
+          // Small delay so user sees the success transition before navigation.
+          setTimeout(() => {
+            const frontendData = convertToFrontend(completePayload.optimized_resume);
+            completeOptimization(frontendData, completePayload);
+          }, 900);
         }
-        if (optimizedResume.experience[0].bullets.length > 1) {
-           optimizedResume.experience[0].bullets[1] = "Orchestrated cross-functional collaboration with engineering and product partners to launch 4 major feature updates ahead of tight deadlines, generating $2M in projected ARR.";
-        }
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+        dispatch({ type: 'error', message: err.message || 'Stream error' });
       }
-      
-      const currentResume = resumes.find(r => r.id === currentResumeId);
-      const beforeScore = currentResume?.latestScore || 60;
-      const newScore = Math.max(80, Math.min(99, beforeScore + Math.floor(Math.random() * 15) + 10));
-      
-      completeOptimization(optimizedResume, newScore);
-    }, 4500);
-    
-    return () => {
-      clearInterval(stepInterval);
-      clearTimeout(completionTimer);
     };
-  }, [resumeData, completeOptimization, resumes, currentResumeId]);
+
+    run();
+
+    return () => {
+      controller.abort();
+      if (abortRef.current === controller) abortRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentResumeId]);
+
+  const requestCancel = () => setConfirmOpen(true);
+  const performCancel = () => {
+    abortRef.current?.abort();
+    setConfirmOpen(false);
+    setAppState('idle');
+  };
+
+  const stages = visibleStages(mode);
+  const isComplete = view.phase === 'complete';
+  let effectivePhase: 'prepare' | 'strengthen' | 'polish';
+  if (view.phase === 'complete') effectivePhase = 'polish';
+  else if (view.phase === 'error') effectivePhase = 'prepare';
+  else effectivePhase = view.phase;
+  const headlineStage = STAGE_LABELS[effectivePhase] || 'Preparing';
+  const currentStepIdx = Math.max(1, stages.indexOf(effectivePhase) + 1);
 
   return (
-    <div className="w-full flex items-center justify-center min-h-[60vh] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-10 max-w-md mx-auto shadow-sm text-center mt-12">
-      <div className="flex flex-col items-center w-full">
-        <div className="relative mb-8">
-          <div className="absolute inset-0 bg-blue-500 blur-xl opacity-20 rounded-full animate-pulse-slow"></div>
-          <div className="w-20 h-20 bg-blue-50 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center relative shadow-inner">
-            <Loader2 className="w-10 h-10 text-blue-600 dark:text-blue-400 animate-spin" />
-            <Sparkles className="w-5 h-5 text-yellow-500 absolute -top-2 -right-2 animate-bounce" />
+    <div className="w-full bg-[#F5F1E8] dark:bg-[#1A1814] border border-zinc-900/15 dark:border-zinc-100/15 px-6 lg:px-10 py-8 sm:py-10 mt-6 relative">
+      {/* Masthead */}
+      <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.25em] text-zinc-700 dark:text-zinc-400 pb-3 border-b border-zinc-900/30 dark:border-zinc-100/20">
+        <span>Vol. 01 · Optimization in progress</span>
+        <ElapsedPill startedAt={view.startedAt} />
+      </div>
+
+      <div className="relative">
+        {/* Header row: title + cancel */}
+        <div className="flex items-start justify-between gap-4 pt-6 pb-5 border-b border-zinc-900/20 dark:border-zinc-100/15">
+          <div className="flex-1">
+            <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-500 mb-2">
+              {isComplete ? 'Finished' : `Step ${Math.min(stages.length, currentStepIdx)} of ${stages.length}`}
+            </p>
+            <h2 className="font-serif text-3xl sm:text-4xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight leading-[1.05]">
+              {isComplete ? (
+                <>Your resume,<span className="italic font-normal text-zinc-700 dark:text-zinc-300"> ready.</span></>
+              ) : (
+                <>{headlineStage}<span className="italic font-normal text-zinc-700 dark:text-zinc-300"> in motion.</span></>
+              )}
+            </h2>
+            <div className="mt-3">
+              <ReassurancePhrase phase={view.phase} />
+            </div>
+          </div>
+          <button
+            onClick={requestCancel}
+            aria-label="Cancel optimization"
+            className="shrink-0 text-[11px] font-mono uppercase tracking-widest text-zinc-500 hover:text-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-100 underline-offset-4 hover:underline transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+
+        {/* Score + stage card */}
+        <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] gap-8 items-center my-7">
+          <div className="flex items-center justify-center md:justify-start">
+            <ScoreRing
+              score={view.bestScore}
+              initial={view.initialScore}
+              burstAt={view.burstAt}
+            />
+          </div>
+          <div className="w-full">
+            <StageCard phase={view.phase} />
           </div>
         </div>
-        
-        <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-6">
-          Optimizing your resume
-        </h2>
-        
-        <div className="w-full space-y-3">
-          {steps.map((step, index) => {
-             const isActive = index === currentStep;
-             const isComplete = index < currentStep;
-             
-             return (
-               <div 
-                 key={index} 
-                 className={`flex items-center text-sm transition-all duration-300 ${
-                   isActive ? 'text-blue-600 dark:text-blue-400 font-medium scale-105 transform origin-left' : 
-                   isComplete ? 'text-zinc-500 dark:text-zinc-400' : 
-                   'text-zinc-300 dark:text-zinc-700'
-                 }`}
-               >
-                 {isComplete ? (
-                   <CheckCircle2 size={16} className="mr-3 text-green-500 shrink-0" />
-                 ) : isActive ? (
-                   <Loader2 size={16} className="mr-3 animate-spin shrink-0" />
-                 ) : (
-                   <div className="w-4 h-4 rounded-full border-2 border-inherit mr-3 opacity-50 shrink-0"></div>
-                 )}
-                 {step}
-               </div>
-             );
-          })}
-        </div>
+
+        {/* Stage stepper */}
+        <StageStepper phase={view.phase} mode={mode} />
+
+        {/* Tier-2 drawer */}
+        <DetailsDrawer logs={view.rawLogs} />
+
+        {/* Error banner */}
+        {view.phase === 'error' && (
+          <div className="w-full mt-5 bg-rose-50 dark:bg-rose-950/20 border border-rose-200/70 dark:border-rose-900/40 rounded-xl p-4 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h4 className="text-sm font-semibold text-rose-800 dark:text-rose-300">
+                Something went wrong
+              </h4>
+              <p className="text-xs text-rose-700 dark:text-rose-400 mt-1">
+                {view.errorMessage || 'Optimization could not complete. Your original resume is safe.'}
+              </p>
+              <button
+                onClick={() => setAppState('idle')}
+                className="mt-3 inline-flex items-center text-xs font-semibold text-rose-800 dark:text-rose-300 hover:underline gap-1"
+              >
+                <ArrowLeft size={12} />
+                Return to Editor
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      <CancelConfirmModal
+        open={confirmOpen}
+        onConfirm={performCancel}
+        onDismiss={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }
