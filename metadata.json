@@ -1,6 +1,6 @@
 {
-  "name": "Resume Optimizer",
-  "description": "A clean, minimal AI Resume Optimizer UI.",
+  "name": "ResumeCraft",
+  "description": "ResumeCraft — AI-powered resume optimization that gets past ATS filters.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

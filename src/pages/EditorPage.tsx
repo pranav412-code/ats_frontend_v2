@@ -2,11 +2,12 @@ import React from 'react';
 import { useResumeStore, convertToBackend } from '../store/useResumeStore';
 import { UploadSection } from '../components/UploadSection';
 import { ResumePreview } from '../components/ResumePreview';
-import { Download, Sparkles, Loader2 } from 'lucide-react';
+import { Download, Sparkles, Loader2, Plus, UploadCloud, LayoutDashboard, ArrowLeft, Lock } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ProcessingScreen } from '../components/ProcessingScreen';
 import { ResultsPage } from './ResultsPage';
 import { ScoreGauge } from '../components/ScoreGauge';
+import { fetchApi } from '../lib/api';
 
 const LIVE_SCAN_DEBOUNCE_MS = 700;
 
@@ -37,7 +38,15 @@ export function EditorPage() {
     setLiveScoring,
     exportToPdf,
     saveJdText,
+    createResume,
+    goToUpload,
+    setCurrentPage,
+    resumes,
+    currentResumeId,
   } = useResumeStore();
+  const currentResume = resumes.find(r => r.id === currentResumeId);
+  const backendSnapshot = currentResume?.backendSnapshot;
+  const isLocked = !!currentResume?.locked;
 
   // Debounced live ATS scoring on every edit
   React.useEffect(() => {
@@ -51,17 +60,14 @@ export function EditorPage() {
     const timer = setTimeout(async () => {
       setLiveScoring(true);
       try {
-        const res = await fetch('http://localhost:8000/api/v1/optimize/score-only', {
+        const data = await fetchApi('/optimize/score-only', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            resume_json: convertToBackend(resumeData),
+            resume_json: convertToBackend(resumeData, backendSnapshot),
             jd_text: jdText || '',
           }),
           signal: controller.signal,
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
         const score =
           typeof data?.score === 'number'
             ? data.score
@@ -97,13 +103,49 @@ export function EditorPage() {
   return (
     <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-6rem)] pt-4 pb-2 lg:pb-0">
       {/* Left side - Resume Preview */}
-      <div className="flex-1 lg:w-3/4 flex flex-col min-h-0 relative min-h-[600px] lg:min-h-0 lg:h-full">
-        <ResumePreview />
+      <div className="flex-1 lg:w-3/4 flex flex-col min-h-0 relative min-h-[600px] lg:min-h-0 lg:h-full gap-3">
+        <button
+          onClick={() => goToUpload()}
+          className="self-start inline-flex items-center gap-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 font-mono uppercase tracking-widest text-[10px] font-bold transition-colors pl-1"
+        >
+          <ArrowLeft size={12} strokeWidth={2.5} />
+          Back to Upload
+        </button>
+        <div className="flex-1 min-h-0 relative">
+          <ResumePreview />
+        </div>
       </div>
 
       {/* Right side - Actions Panel */}
       <div className="w-full lg:w-1/4 flex flex-col gap-0 lg:h-full overflow-y-auto pr-1">
         <div className="border border-zinc-300 dark:border-zinc-700 bg-white/60 dark:bg-zinc-900/40 flex flex-col">
+          {/* Navigation & File Actions */}
+          <div className="p-5 border-b border-zinc-300 dark:border-zinc-700 space-y-2">
+            <button
+              onClick={() => setCurrentPage('resumes')}
+              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[10px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <LayoutDashboard size={12} strokeWidth={2.5} />
+              Resume Dashboard
+            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => createResume()}
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[10px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              >
+                <Plus size={12} strokeWidth={2.5} />
+                New
+              </button>
+              <button
+                onClick={() => goToUpload()}
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[10px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              >
+                <UploadCloud size={12} strokeWidth={2.5} />
+                Upload
+              </button>
+            </div>
+          </div>
+
           {/* Live ATS Score */}
           <div className="p-5 border-b border-zinc-300 dark:border-zinc-700 flex flex-col items-center">
             <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 mb-3 self-start">
@@ -131,15 +173,40 @@ export function EditorPage() {
 
           {/* Job Description */}
           <div className="p-5 border-b border-zinc-300 dark:border-zinc-700">
-            <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 mb-3">
-              Job Description
-            </p>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500">
+                Job Description
+              </p>
+              {jdText.trim().length > 0 ? (
+                <span
+                  className="inline-flex items-center gap-1.5 px-2 py-0.5 border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10px] font-mono uppercase tracking-[0.2em] font-bold"
+                  title="JD mode active — optimization will tailor to this job description"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  JD Mode
+                </span>
+              ) : (
+                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-600">
+                  Generic Mode
+                </span>
+              )}
+            </div>
             <textarea
               value={jdText}
               onChange={(e) => setJdText(e.target.value)}
               placeholder="Paste target job description here to tailor your resume..."
-              className="w-full h-32 px-3 py-2.5 bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-serif text-sm focus:outline-none focus:border-zinc-900 dark:focus:border-zinc-100 text-zinc-800 dark:text-zinc-100 placeholder:italic placeholder-zinc-400 dark:placeholder-zinc-600 resize-none transition-colors"
+              className={cn(
+                'w-full h-32 px-3 py-2.5 bg-white dark:bg-zinc-950 border font-serif text-sm focus:outline-none text-zinc-800 dark:text-zinc-100 placeholder:italic placeholder-zinc-400 dark:placeholder-zinc-600 resize-none transition-colors',
+                jdText.trim().length > 0
+                  ? 'border-emerald-500/50 focus:border-emerald-600 dark:focus:border-emerald-400'
+                  : 'border-zinc-300 dark:border-zinc-700 focus:border-zinc-900 dark:focus:border-zinc-100'
+              )}
             />
+            {jdText.trim().length > 0 && (
+              <p className="mt-2 text-[10px] font-mono text-zinc-500 dark:text-zinc-400">
+                {jdText.trim().split(/\s+/).length} words · keywords will be extracted on optimize
+              </p>
+            )}
           </div>
 
           {/* Optimization Mode */}
@@ -169,9 +236,17 @@ export function EditorPage() {
 
           {/* Actions */}
           <div className="p-5 space-y-2">
+            {isLocked && (
+              <div className="mb-1 p-3 border border-amber-300 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400 text-[11px] font-mono leading-relaxed flex items-start gap-2">
+                <Lock size={13} className="shrink-0 mt-0.5" />
+                <span>Read-only — over plan limit. Resubscribe or delete other resumes to edit.</span>
+              </div>
+            )}
             <button
               onClick={() => startOptimization()}
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-[11px] font-bold transition-colors"
+              disabled={isLocked}
+              title={isLocked ? 'Resume locked — over plan limit' : undefined}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Sparkles size={13} strokeWidth={2.5} />
               Optimize Resume

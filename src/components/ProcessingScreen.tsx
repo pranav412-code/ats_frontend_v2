@@ -1,6 +1,7 @@
 import React, { useEffect, useReducer, useRef, useState } from 'react';
 import { useResumeStore, convertToBackend, convertToFrontend } from '../store/useResumeStore';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import {
   initialViewState,
   reduceView,
@@ -32,7 +33,11 @@ export function ProcessingScreen() {
     optimizationMode,
     setAppState,
     recordIterationStep,
+    resumes,
+    setCredits,
+    pushToast,
   } = useResumeStore();
+  const backendSnapshot = resumes.find(r => r.id === currentResumeId)?.backendSnapshot;
 
   const mode = (optimizationMode as 'quick' | 'balanced' | 'deep') || 'balanced';
   const [view, dispatch] = useReducer(viewReducer, mode, initialViewState);
@@ -48,18 +53,20 @@ export function ProcessingScreen() {
     abortRef.current = controller;
 
     const run = async () => {
-      const payload = {
-        token: 'local',
-        resume_json: convertToBackend(resumeData),
-        resume_id: currentResumeId,
-        jd_text: jdText || '',
-        target_score: TARGET_SCORE,
-        max_iterations: mode === 'quick' ? 1 : mode === 'deep' ? 3 : 2,
-        mode,
-      };
-
       try {
-        const res = await fetch('http://localhost:8000/api/v1/optimize/stream', {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token || 'local';
+
+        const payload = {
+          token,
+          resume_json: convertToBackend(resumeData, backendSnapshot),
+          resume_id: currentResumeId,
+          jd_text: jdText || '',
+          target_score: TARGET_SCORE,
+          max_iterations: mode === 'quick' ? 1 : mode === 'deep' ? 3 : 2,
+          mode,
+        };
+        const res = await fetch('http://localhost:8001/api/v1/optimize/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
           body: JSON.stringify(payload),
@@ -97,6 +104,39 @@ export function ProcessingScreen() {
                   if (parsed.type === 'complete') {
                     parsed._startedAt = startedAt;
                     completePayload = parsed;
+                  } else if (parsed.type === 'credits_update') {
+                    // Backend deducts at start + may refund on no-improvement
+                    // or already-at-target. Reflect every push to the store so
+                    // the navbar credit indicator updates in real time.
+                    if (typeof parsed.balance === 'number') setCredits(parsed.balance);
+                  } else if (parsed.type === 'error' && typeof parsed.message === 'string') {
+                    // Concurrency-cap / busy / per-user-limit errors → toast.
+                    const msg: string = parsed.message;
+                    if (
+                      msg.includes('Server busy') ||
+                      msg.includes('already have an optimization') ||
+                      msg.includes('Insufficient credits')
+                    ) {
+                      pushToast({
+                        kind: 'error',
+                        title: 'Cannot start optimization',
+                        message: msg,
+                        duration: 7000,
+                      });
+                    }
+                  } else if (parsed.type === 'refund') {
+                    // Explicit refund event (no-improvements, save-fail,
+                    // server-error, scoring-timeout, already-at-target,
+                    // user-cancelled). Show user-visible toast so they know
+                    // credits returned + why.
+                    const amt = typeof parsed.amount === 'number' ? parsed.amount : 0;
+                    const reason = parsed.reason || 'Optimization issue';
+                    pushToast({
+                      kind: 'refund',
+                      title: `${amt} credit${amt === 1 ? '' : 's'} refunded`,
+                      message: reason,
+                      duration: 8000,
+                    });
                   } else if (parsed.type === 'iteration_complete') {
                     recordIterationStep({
                       iteration: parsed.iteration,

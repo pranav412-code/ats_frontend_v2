@@ -13,7 +13,7 @@ interface InlineEditableTextProps {
   type?: 'text' | 'email' | 'tel' | 'url';
   /** Auto-select all text on focus. Default true for single-line. */
   autoSelect?: boolean;
-  /** Max characters (display only, not enforced). */
+  /** Max characters — enforced by input/textarea maxLength attr. */
   maxLength?: number;
   /** Called when user pastes multi-line text. Caller can split into multiple bullets. */
   onMultilinePaste?: (lines: string[]) => boolean;
@@ -40,15 +40,37 @@ export function InlineEditableText({
   const [isEditing, setIsEditing] = useState(startEditing || false);
   const [currentValue, setCurrentValue] = useState(value);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const pendingSelectionRef = useRef<number | null>(null);
+  // Most recently committed value from this component. Used to ignore stale
+  // external `value` updates that arrive after we saved but before the parent
+  // store has acknowledged our save.
+  const lastSavedRef = useRef<string>(value);
+  const autoSelectRef = useRef<boolean | undefined>(autoSelect);
+  autoSelectRef.current = autoSelect;
+
+  useEffect(() => {
+    if (pendingSelectionRef.current !== null && inputRef.current) {
+      const pos = pendingSelectionRef.current;
+      pendingSelectionRef.current = null;
+      try {
+        inputRef.current.setSelectionRange(pos, pos);
+      } catch {}
+    }
+  }, [currentValue]);
 
   useEffect(() => {
     onEditStateChange?.(isEditing);
   }, [isEditing, onEditStateChange]);
 
   useEffect(() => {
-    // Only sync from external `value` while not actively editing.
-    // Prevents live-score / store refresh from clobbering typed text mid-edit.
-    if (!isEditing) setCurrentValue(value);
+    // Only sync from external `value` while not actively editing AND when the
+    // incoming value differs from what we just saved. Prevents live-score /
+    // store refresh from clobbering typed text mid-edit, and prevents a stale
+    // pre-save value from overwriting our save before the parent commits.
+    if (!isEditing && value !== lastSavedRef.current) {
+      lastSavedRef.current = value;
+      setCurrentValue(value);
+    }
   }, [value, isEditing]);
 
   useEffect(() => {
@@ -61,18 +83,21 @@ export function InlineEditableText({
       inputRef.current.style.height = inputRef.current.scrollHeight + 'px';
     }
 
-    const shouldSelect = autoSelect ?? !multiline;
+    const shouldSelect = autoSelectRef.current ?? !multiline;
     if (shouldSelect) {
       inputRef.current.select();
     } else {
       const length = inputRef.current.value.length;
       inputRef.current.setSelectionRange(length, length);
     }
-  }, [isEditing, multiline, autoSelect]);
+    // autoSelect intentionally not in deps — read via ref to avoid re-running
+    // selection mid-edit when parent passes new inline values.
+  }, [isEditing, multiline]);
 
   const handleSave = () => {
     setIsEditing(false);
     if (currentValue !== value) {
+      lastSavedRef.current = currentValue;
       onSave(currentValue);
     }
   };
@@ -83,6 +108,11 @@ export function InlineEditableText({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Give parent first crack so it can preventDefault before our save logic runs.
+    if (onKeyDown) {
+      onKeyDown(e, currentValue);
+      if (e.defaultPrevented) return;
+    }
     if (e.key === 'Enter') {
       if (multiline) {
         if (e.ctrlKey || e.metaKey || e.shiftKey) {
@@ -109,23 +139,14 @@ export function InlineEditableText({
               if (currentLine.trim() === prefix.trim()) {
                 const before = val.substring(0, start - currentLine.length);
                 const after = val.substring(start);
+                pendingSelectionRef.current = before.length;
                 setCurrentValue(before + after);
-                requestAnimationFrame(() => {
-                  if (inputRef.current) {
-                    (inputRef.current as HTMLTextAreaElement).setSelectionRange(before.length, before.length);
-                  }
-                });
               } else {
                 // Otherwise add a new line with the same bullet
                 const before = val.substring(0, start);
                 const after = val.substring(start);
+                pendingSelectionRef.current = before.length + 1 + prefix.length;
                 setCurrentValue(before + '\n' + prefix + after);
-                requestAnimationFrame(() => {
-                  if (inputRef.current) {
-                    const newPos = before.length + 1 + prefix.length;
-                    (inputRef.current as HTMLTextAreaElement).setSelectionRange(newPos, newPos);
-                  }
-                });
               }
             }
           }
@@ -138,10 +159,7 @@ export function InlineEditableText({
       e.preventDefault();
       handleCancel();
     }
-    // Let Tab proceed naturally, which will trigger onBlur and handleSave
-    if (onKeyDown) {
-      onKeyDown(e, currentValue);
-    }
+    // Tab proceeds naturally → onBlur → handleSave.
   };
 
   const isEmpty = !value || !value.trim();
@@ -268,11 +286,9 @@ export function InlineEditableText({
                     diff = 2;
                   }
                   
+                  pendingSelectionRef.current = start + diff;
                   setCurrentValue(lines.join('\n'));
-                  requestAnimationFrame(() => {
-                     target.setSelectionRange(start + diff, end + diff);
-                     target.focus();
-                  });
+                  target.focus();
                 }
               }}
               className="pointer-events-auto px-1.5 py-0.5 bg-white/90 hover:bg-zinc-100 dark:bg-zinc-900/90 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded shadow-sm border border-zinc-200 dark:border-zinc-800 text-[9px] font-mono uppercase tracking-[0.2em] transition-colors cursor-pointer backdrop-blur-sm"
@@ -297,8 +313,8 @@ export function InlineEditableText({
           : 'border-transparent',
         className
       )}
-      onClick={() => setIsEditing(true)}
-      onFocus={() => setIsEditing(true)}
+      onClick={() => { if (!isEditing) setIsEditing(true); }}
+      onFocus={() => { if (!isEditing) setIsEditing(true); }}
       tabIndex={0}
       role="textbox"
       aria-label={isEmpty ? `${placeholder} — click to edit` : `${value} — click to edit`}

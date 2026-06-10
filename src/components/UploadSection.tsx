@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useResumeStore, convertToFrontend, mockResumeData } from '../store/useResumeStore';
 import { UploadCloud, Plus, Loader2, AlertCircle, FileText, Zap, Shield, Sparkles } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { fetchApi } from '../lib/api';
 
 export function UploadSection() {
   const [isHovering, setIsHovering] = useState(false);
@@ -21,35 +22,30 @@ export function UploadSection() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const uploadRes = await fetch('http://localhost:8000/api/v1/upload', {
+      // fetchApi attaches Supabase Bearer token + base URL. Upload + parse
+      // both require auth now. `/upload` returns a `file_token` (basename
+      // only) — passing this instead of an absolute path closes the
+      // path-traversal hole previously open on /parse.
+      const uploadData = await fetchApi('/upload', {
         method: 'POST',
         body: formData,
       });
-
-      if (!uploadRes.ok) {
-        const errorData = await uploadRes.json().catch(() => ({ detail: 'Upload failed' }));
-        throw new Error(errorData.detail || 'Upload failed');
-      }
-
-      const uploadData = await uploadRes.json();
-      const filePath = uploadData.file_path;
+      const fileToken = uploadData.file_token ?? uploadData.file_path; // fallback during rollout
+      const sessionId: string | undefined = uploadData.session_id;
 
       setStatusText('Parsing resume layout...');
-      const parseRes = await fetch('http://localhost:8000/api/v1/parse', {
+      const parsedSchema = await fetchApi('/parse', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_path: filePath }),
+        body: JSON.stringify({ file_token: fileToken }),
       });
-
-      if (!parseRes.ok) {
-        const errorData = await parseRes.json().catch(() => ({ detail: 'Parsing failed' }));
-        throw new Error(errorData.detail || 'Parsing failed');
-      }
-
-      const parsedSchema = await parseRes.json();
       setStatusText('Normalizing resume data...');
       const frontendData = convertToFrontend(parsedSchema);
-      uploadResume(frontendData, file.name);
+      // Forward source metadata so the resume row gets its provenance
+      // (source_session_id / filename / ext) on insert.
+      uploadResume(frontendData, file.name, {
+        sessionId,
+        ext: file.name.toLowerCase().endsWith('.docx') ? 'docx' : 'pdf',
+      });
     } catch (err: any) {
       console.error(err);
       setErrorText(err.message || 'An error occurred while uploading or parsing the resume.');
@@ -76,7 +72,7 @@ export function UploadSection() {
     <div className="w-full px-6 lg:px-10 py-8">
       {/* Masthead */}
       <div className="flex items-center justify-between border-b border-zinc-300 dark:border-zinc-700 pb-3 mb-10 text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">
-        <span>Issue 01 · Resume Lab</span>
+        <span>Issue 01 · ResumeCraft</span>
         <span className="hidden sm:inline">{today}</span>
         <span>Section · Editor</span>
       </div>

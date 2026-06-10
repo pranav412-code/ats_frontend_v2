@@ -43,7 +43,7 @@ function coerceLanguages(arr: any[]): any[] {
 }
 
 export function ResumePreview() {
-  const { resumeData, updateResumeField, addBullet, deleteBullet, addSection, removeSection, removeItem, addItem, reorderSections, optimizationResult } = useResumeStore();
+  const { resumeData, updateResumeField, addSection, removeSection, removeItem, addItem, optimizationResult } = useResumeStore();
   const [pendingSectionDelete, setPendingSectionDelete] = useState<string | null>(null);
   const [pendingItemDelete, setPendingItemDelete] = useState<{
     sectionType: string;
@@ -52,6 +52,26 @@ export function ResumePreview() {
     label?: string;
   } | null>(null);
   const [editingCount, setEditingCount] = useState(0);
+  // Track most recently added item id so we can autofocus its primary field.
+  const [autoFocusItemId, setAutoFocusItemId] = useState<string | null>(null);
+
+  const addItemAndFocus = (sectionType: string, customSectionIndex?: number) => {
+    addItem(sectionType, customSectionIndex);
+    // Defer one tick — store mutation is sync but render isn't; clear stale id.
+    setAutoFocusItemId(null);
+    setTimeout(() => {
+      const data = useResumeStore.getState().resumeData;
+      if (!data) return;
+      let arr: any[] | undefined;
+      if (sectionType === 'experience') arr = data.experience;
+      else if (sectionType === 'education') arr = data.education;
+      else if (sectionType === 'projects') arr = data.projects;
+      else if (sectionType === 'customSections' && customSectionIndex !== undefined)
+        arr = data.customSections?.[customSectionIndex]?.items;
+      const last = arr && arr.length > 0 ? arr[arr.length - 1] : null;
+      if (last?.id) setAutoFocusItemId(last.id);
+    }, 0);
+  };
 
   const handleEditStateChange = (isEditing: boolean) => {
     setEditingCount((prev) => (isEditing ? prev + 1 : Math.max(0, prev - 1)));
@@ -86,7 +106,7 @@ export function ResumePreview() {
     return /\(cid:\s*\d+\s*\)/.test(probe);
   }, [summary, experience, education, projects, skills]);
 
-  const sectionOrder = resumeData.sectionOrder || [
+  const derivedOrder = [
     'summary',
     'experience',
     'education',
@@ -100,6 +120,13 @@ export function ResumePreview() {
     ...(hobbies.length > 0 ? ['hobbies'] : []),
     ...(interests.length > 0 ? ['interests'] : []),
   ];
+  // Reconcile stored order with derived. Stored order wins for positioning of
+  // known ids, but any sections newly present in data (and missing from stored
+  // order) get appended so they remain visible.
+  const storedOrder = resumeData.sectionOrder;
+  const sectionOrder = storedOrder
+    ? [...storedOrder, ...derivedOrder.filter((s) => !storedOrder.includes(s))]
+    : derivedOrder;
 
   const KNOWN_SECTIONS = new Set([
     'summary', 'experience', 'education', 'projects', 'skills',
@@ -107,49 +134,22 @@ export function ResumePreview() {
     'hobbies', 'interests', 'volunteer',
   ]);
 
-  const getBulletId = (sectionType: string, sectionIndex: number, bulletIndex: number, customItemIndex?: number) => {
-    return customItemIndex !== undefined 
-      ? `bullet-${sectionType}-${sectionIndex}-${customItemIndex}-${bulletIndex}`
-      : `bullet-${sectionType}-${sectionIndex}-${bulletIndex}`;
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent, sectionType: string, sectionIndex: number, bulletIndex: number, currentValue: string, customItemIndex?: number) => {
-    if (e.key === 'Backspace' && currentValue === '') {
-      e.preventDefault();
-      deleteBullet(sectionType, sectionIndex, bulletIndex, customItemIndex);
-      setTimeout(() => {
-        const prevId = getBulletId(sectionType, sectionIndex, bulletIndex - 1, customItemIndex);
-        const prevBullet = document.getElementById(prevId);
-        if (prevBullet) {
-          const textbox = prevBullet.querySelector('[role="textbox"]') as HTMLElement;
-          if (textbox) textbox.click();
-        }
-      }, 50);
-    }
-    // Handle Enter to add next bullet
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      addBullet(sectionType, sectionIndex, customItemIndex);
-      setTimeout(() => {
-        const nextId = getBulletId(sectionType, sectionIndex, bulletIndex + 1, customItemIndex);
-        const nextBullet = document.getElementById(nextId);
-        if (nextBullet) {
-          const textbox = nextBullet.querySelector('[role="textbox"]') as HTMLElement;
-          if (textbox) textbox.click();
-        }
-      }, 50);
-    }
-  };
+  // Bullets in experience/projects/customSections render as one multiline
+  // textarea per entry (value = bullets.join('\n')). Per-bullet add/delete
+  // navigation is handled inside InlineEditableText's auto-bullet logic.
 
   const onDragEnd = (result: DropResult) => {
     if (!result.destination) return;
     const { source, destination } = result;
     if (source.index === destination.index) return;
-    reorderSections(source.index, destination.index);
+    const newOrder = Array.from(sectionOrder);
+    const [removed] = newOrder.splice(source.index, 1);
+    newOrder.splice(destination.index, 0, removed);
+    updateResumeField(['sectionOrder'], newOrder);
   };
 
   return (
-    <div className="bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 p-8 pb-20 h-full overflow-y-auto w-full font-serif relative text-zinc-900 dark:text-zinc-100">
+    <div className="bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-8 pt-8 pb-0 h-full overflow-y-auto w-full font-serif relative text-zinc-900 dark:text-zinc-100">
       {optimizationResult && (
         <div className="absolute top-4 right-4 flex items-center gap-1.5 px-3 py-1 border border-zinc-900 dark:border-zinc-100 text-zinc-900 dark:text-zinc-100 text-[10px] font-mono uppercase tracking-[0.25em] font-bold animate-in fade-in zoom-in duration-300 z-10 pointer-events-none bg-white/70 dark:bg-zinc-900/70 backdrop-blur-sm">
           <Sparkles size={12} />
@@ -285,7 +285,7 @@ export function ResumePreview() {
                             {experience.length === 0 ? (
                               <button
                                 type="button"
-                                onClick={() => addItem('experience')}
+                                onClick={() => addItemAndFocus('experience')}
                                 className="w-full text-left inline-flex items-center justify-center gap-2 text-sm italic text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 dark:hover:border-zinc-400 rounded-lg p-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                               >
                                 <Plus size={16} />
@@ -309,6 +309,7 @@ export function ResumePreview() {
                                         className="font-medium flex-1 mr-4"
                                         placeholder="Job Title"
                                         onEditStateChange={handleEditStateChange}
+                                        startEditing={exp.id === autoFocusItemId}
                                       />
                                       <StructuredDateInput
                                         value={exp.date}
@@ -331,7 +332,7 @@ export function ResumePreview() {
                                       <InlineEditableText
                                         value={exp.bullets.join('\n')}
                                         onSave={(v) => {
-                                          const newBullets = v.split('\n');
+                                          const newBullets = v.split('\n').map(b => b.trimEnd()).filter(b => b.trim().length > 0);
                                           updateResumeField(['experience', expIndex, 'bullets'], newBullets);
                                         }}
                                         multiline
@@ -344,7 +345,7 @@ export function ResumePreview() {
                                 ))}
                                 <button
                                   type="button"
-                                  onClick={() => addItem('experience')}
+                                  onClick={() => addItemAndFocus('experience')}
                                   className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-100 px-2 py-1 mt-3 border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 dark:hover:border-zinc-400 rounded-md transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                                 >
                                   <Plus size={12} /> Add job
@@ -360,7 +361,7 @@ export function ResumePreview() {
                             {education.length === 0 ? (
                               <button
                                 type="button"
-                                onClick={() => addItem('education')}
+                                onClick={() => addItemAndFocus('education')}
                                 className="w-full text-left inline-flex items-center justify-center gap-2 text-sm italic text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 dark:hover:border-zinc-400 rounded-lg p-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                               >
                                 <Plus size={16} />
@@ -384,6 +385,7 @@ export function ResumePreview() {
                                         className="font-medium mr-4 flex-1 border-b border-transparent"
                                         placeholder="Degree"
                                         onEditStateChange={handleEditStateChange}
+                                        startEditing={edu.id === autoFocusItemId}
                                       />
                                       <StructuredDateInput
                                         value={edu.date}
@@ -405,7 +407,7 @@ export function ResumePreview() {
                                 ))}
                                 <button
                                   type="button"
-                                  onClick={() => addItem('education')}
+                                  onClick={() => addItemAndFocus('education')}
                                   className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-100 px-2 py-1 mt-3 border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 dark:hover:border-zinc-400 rounded-md transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                                 >
                                   <Plus size={12} /> Add school
@@ -421,7 +423,7 @@ export function ResumePreview() {
                             {(!projects || projects.length === 0) ? (
                               <button
                                 type="button"
-                                onClick={() => addItem('projects')}
+                                onClick={() => addItemAndFocus('projects')}
                                 className="w-full text-left inline-flex items-center justify-center gap-2 text-sm italic text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 dark:hover:border-zinc-400 rounded-lg p-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                               >
                                 <Plus size={16} />
@@ -445,6 +447,7 @@ export function ResumePreview() {
                                         className="font-medium flex-1 mr-4"
                                         placeholder="Project Title"
                                         onEditStateChange={handleEditStateChange}
+                                        startEditing={proj.id === autoFocusItemId}
                                       />
                                       <StructuredDateInput
                                         value={proj.date}
@@ -460,7 +463,7 @@ export function ResumePreview() {
                                       <InlineEditableText
                                         value={proj.bullets.join('\n')}
                                         onSave={(v) => {
-                                          const newBullets = v.split('\n');
+                                          const newBullets = v.split('\n').map(b => b.trimEnd()).filter(b => b.trim().length > 0);
                                           updateResumeField(['projects', projIndex, 'bullets'], newBullets);
                                         }}
                                         multiline
@@ -473,7 +476,7 @@ export function ResumePreview() {
                                 ))}
                                 <button
                                   type="button"
-                                  onClick={() => addItem('projects')}
+                                  onClick={() => addItemAndFocus('projects')}
                                   className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-100 px-2 py-1 mt-3 border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 dark:hover:border-zinc-400 rounded-md transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                                 >
                                   <Plus size={12} /> Add project
@@ -521,7 +524,7 @@ export function ResumePreview() {
                                 items={(customSection.items || []).map((it) => it.title)}
                                 itemPlaceholder="Item"
                                 placeholder={`Add to ${customSection.title.toLowerCase()}...`}
-                                onAdd={() => addItem('customSections', customSectionIndex)}
+                                onAdd={() => addItemAndFocus('customSections', customSectionIndex)}
                                 onRemove={(i) => removeItem('customSections', i, customSectionIndex)}
                                 onUpdate={(i, v) => updateResumeField(['customSections', customSectionIndex, 'items', i, 'title'], v)}
                                 onAddNewValue={(val) => {
@@ -540,7 +543,7 @@ export function ResumePreview() {
                             ) : customSection.items.length === 0 ? (
                               <button
                                 type="button"
-                                onClick={() => addItem('customSections', customSectionIndex)}
+                                onClick={() => addItemAndFocus('customSections', customSectionIndex)}
                                 className="inline-flex items-center gap-1.5 text-sm italic text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
                               >
                                 <Plus size={12} />
@@ -564,6 +567,7 @@ export function ResumePreview() {
                                         className="font-medium flex-1 mr-4"
                                         placeholder="Item Title"
                                         onEditStateChange={handleEditStateChange}
+                                        startEditing={item.id === autoFocusItemId}
                                       />
                                       <StructuredDateInput
                                         value={item.date}
@@ -586,7 +590,7 @@ export function ResumePreview() {
                                       <InlineEditableText
                                         value={item.bullets.join('\n')}
                                         onSave={(v) => {
-                                          const newBullets = v.split('\n');
+                                          const newBullets = v.split('\n').map(b => b.trimEnd()).filter(b => b.trim().length > 0);
                                           updateResumeField(['customSections', customSectionIndex, 'items', itemIndex, 'bullets'], newBullets);
                                         }}
                                         multiline
@@ -599,7 +603,7 @@ export function ResumePreview() {
                                 ))}
                                 <button
                                   type="button"
-                                  onClick={() => addItem('customSections', customSectionIndex)}
+                                  onClick={() => addItemAndFocus('customSections', customSectionIndex)}
                                   className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-100 px-2 py-1 mt-3 border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 dark:hover:border-zinc-400 rounded-md transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                                 >
                                   <Plus size={12} /> Add item
@@ -866,11 +870,27 @@ function BottomAddNav({ onAdd, currentSections }: { onAdd: (type: string) => voi
     { key: 'interests', label: 'Interests' },
   ].filter(p => !currentSections.includes(p.key));
 
+  // Sticky tray — pinned to bottom of editor scroll container, full width.
+  // Shorter upward gradient fade so scrolling content dissolves into the bar
+  // without claiming too much vertical real-estate.
+  const stickyShell =
+    "sticky bottom-0 -mx-8 px-8 pt-12 pb-3 flex justify-center pointer-events-none z-50 " +
+    "bg-gradient-to-t " +
+    "from-white from-50% via-white/85 via-80% to-transparent " +
+    "dark:from-zinc-950 dark:from-50% dark:via-zinc-950/85 dark:via-80% dark:to-transparent";
+
+  const trayInner =
+    "pointer-events-auto inline-flex " +
+    "bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl backdrop-saturate-150 " +
+    "shadow-lg shadow-zinc-200/50 dark:shadow-black/50 " +
+    "border border-zinc-200/60 dark:border-zinc-700/60 rounded-full " +
+    "px-3 py-1.5 items-center gap-1 transition-all";
+
   if (primary.length === 1 && extras.length === 0) {
     return (
-      <div className="sticky bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white to-transparent dark:from-zinc-950 dark:via-zinc-950 pt-10 pb-6 mt-8 flex justify-center border-t-0 pointer-events-none z-50">
-        <div className="relative pointer-events-auto">
-          <div className="bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xl backdrop-saturate-150 shadow-lg shadow-zinc-200/50 dark:shadow-black/50 border border-zinc-200/50 dark:border-zinc-700/50 rounded-full px-2 py-1.5 flex items-center gap-1 transition-all">
+      <div className={stickyShell}>
+        <div className="relative w-full flex justify-center pointer-events-auto">
+          <div className={trayInner + " justify-center"}>
             <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 px-3 uppercase tracking-[0.2em] select-none">Add</span>
             <button
               onClick={() => onAdd('custom')}
@@ -885,9 +905,9 @@ function BottomAddNav({ onAdd, currentSections }: { onAdd: (type: string) => voi
   }
 
   return (
-    <div className="sticky bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white to-transparent dark:from-zinc-950 dark:via-zinc-950 pt-10 pb-6 mt-8 flex justify-center border-t-0 pointer-events-none z-50">
-      <div className="relative pointer-events-auto">
-        <div className="bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xl backdrop-saturate-150 shadow-lg shadow-zinc-200/50 dark:shadow-black/50 border border-zinc-200/50 dark:border-zinc-700/50 rounded-full px-2 py-1.5 flex items-center gap-1 transition-all">
+    <div className={stickyShell}>
+      <div className="relative w-full flex justify-center pointer-events-auto">
+        <div className={trayInner}>
           <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 px-3 uppercase tracking-[0.2em] select-none">Add</span>
           {primary.map((p) => (
             <button
@@ -898,32 +918,34 @@ function BottomAddNav({ onAdd, currentSections }: { onAdd: (type: string) => voi
               {p.label}
             </button>
           ))}
-          <button
-            type="button"
-            onClick={() => setMoreOpen((v) => !v)}
-            aria-expanded={moreOpen}
-            className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all active:scale-95 inline-flex items-center gap-1 ${moreOpen ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-inner' : 'text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white/80 dark:hover:bg-zinc-800/80 hover:shadow-sm'} ${extras.length === 0 ? 'hidden' : ''}`}
-          >
-            More
-            <ChevronDown size={14} className={`transition-transform duration-300 ${moreOpen ? 'rotate-180' : ''}`} />
-          </button>
-        </div>
-        {moreOpen && (
-          <div className="absolute bottom-full mb-3 right-0 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl border border-zinc-200/50 dark:border-zinc-700/50 shadow-xl shadow-zinc-200/50 dark:shadow-black/50 rounded-2xl p-2 min-w-[200px] flex flex-col origin-bottom-right animate-in fade-in slide-in-from-bottom-2 duration-200">
-            {extras.map((e) => (
-              <button
-                key={e.key}
-                onClick={() => {
-                  onAdd(e.key);
-                  setMoreOpen(false);
-                }}
-                className="text-left px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80 rounded-xl transition-all"
-              >
-                {e.label}
-              </button>
-            ))}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMoreOpen((v) => !v)}
+              aria-expanded={moreOpen}
+              className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all active:scale-95 inline-flex items-center gap-1 ${moreOpen ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-inner' : 'text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white/80 dark:hover:bg-zinc-800/80 hover:shadow-sm'} ${extras.length === 0 ? 'hidden' : ''}`}
+            >
+              More
+              <ChevronDown size={14} className={`transition-transform duration-300 ${moreOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {moreOpen && (
+              <div className="absolute bottom-full mb-2 right-0 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl border border-zinc-200/50 dark:border-zinc-700/50 shadow-xl shadow-zinc-200/50 dark:shadow-black/50 rounded-2xl p-2 min-w-[180px] flex flex-col origin-bottom-right animate-in fade-in slide-in-from-bottom-1 duration-150">
+                {extras.map((e) => (
+                  <button
+                    key={e.key}
+                    onClick={() => {
+                      onAdd(e.key);
+                      setMoreOpen(false);
+                    }}
+                    className="text-left px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80 rounded-xl transition-all"
+                  >
+                    {e.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

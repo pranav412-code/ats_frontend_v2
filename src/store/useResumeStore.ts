@@ -1,7 +1,18 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { fetchApi } from '../lib/api';
+import { supabase } from '../lib/supabase';
 
-export type Page = 'editor' | 'resumes' | 'history';
+// Pages safe to restore after reload. Transient flows (payment_*, landing,
+// payment_failed) are excluded — restoring them would reopen a flow the user
+// has already moved past.
+const PERSISTABLE_PAGES = new Set<Page>([
+  'home', 'editor', 'resumes', 'history', 'profile',
+  'security', 'subscription', 'pricing', 'transactions',
+  'privacy', 'terms', 'refund', 'contact',
+]);
+
+export type Page = 'landing' | 'home' | 'editor' | 'resumes' | 'history' | 'profile' | 'security' | 'subscription' | 'pricing' | 'payment_waiting' | 'payment_success' | 'payment_failed' | 'transactions' | 'privacy' | 'terms' | 'refund' | 'contact';
 export type AppState = 'idle' | 'processing' | 'results';
 
 export interface CustomSection {
@@ -84,6 +95,17 @@ export interface Resume {
   latestScore: number | null;
   lastUpdated: number;
   targetRole?: string;
+  /** Read-only lock: over plan slot limit after a subscription lapse. */
+  locked?: boolean;
+  /**
+   * Most recent backend-shape payload (from optimizer best_resume or DB
+   * `optimized_data`). Used by `convertToBackend(data, snapshot)` to carry
+   * engine-only fields (experience.technologies, experience.location,
+   * education.gpa) across the frontend round-trip. Without this, live
+   * scoring drops below post-optimization score because the scorer sees
+   * empty technologies arrays.
+   */
+  backendSnapshot?: any;
 }
 
 export interface OptimizationRun {
@@ -117,10 +139,20 @@ export interface IterationStep {
   delta: number;
 }
 
+export interface Toast {
+  id: string;
+  kind: 'success' | 'error' | 'info' | 'refund';
+  title: string;
+  message?: string;
+  /** ms before auto-dismiss; 0 = manual */
+  duration?: number;
+}
+
 interface ResumeStore {
   currentPage: Page;
   appState: AppState;
   resumes: Resume[];
+  resumesLoading: boolean;
   currentResumeId: string | null;
   resumeData: ResumeData | null;
   history: OptimizationRun[];
@@ -131,12 +163,20 @@ interface ResumeStore {
   optimizationMode: string;
   liveScore: number | null;
   liveScoring: boolean;
+  /** Current credit balance from /profile/credits. null = unknown (not yet fetched). */
+  credits: number | null;
+  /** True while a /profile/credits request is in flight (avoids UI flicker). */
+  creditsLoading: boolean;
 
   setCurrentPage: (page: Page) => void;
   setAppState: (state: AppState) => void;
   createResume: () => void;
   goToUpload: () => void;
-  uploadResume: (data: ResumeData, filename?: string) => void;
+  uploadResume: (
+    data: ResumeData,
+    filename?: string,
+    source?: { sessionId?: string; ext?: 'pdf' | 'docx' },
+  ) => void;
   openResume: (id: string) => void;
   deleteResume: (id: string) => void;
   setLiveScore: (score: number | null) => void;
@@ -160,6 +200,89 @@ interface ResumeStore {
   fetchResumes: () => Promise<void>;
   fetchHistory: () => Promise<void>;
   exportToPdf: () => Promise<void>;
+  /** Fetch current credit balance from backend. */
+  fetchCredits: () => Promise<void>;
+  /** Apply a credit balance update (used by SSE `credits_update` event). */
+  setCredits: (balance: number | null) => void;
+  /**
+   * Demo-mode pack catalog + purchase. Real payment provider integration
+   * (Razorpay/Stripe) will hook into the same `purchasePack` action with
+   * extra payload (payment_id, signature). Backend toggles `demo_mode`
+   * via PAYMENTS_DEMO_MODE setting.
+   */
+  creditPacks: CreditPack[] | null;
+  creditPackCurrency: string;
+  paymentsDemoMode: boolean;
+  fetchCreditPacks: () => Promise<void>;
+  purchasePack: (packId: string) => Promise<{ added: number; balance: number } | null>;
+
+  /** Slot entitlement (limit/used) from /credits/entitlement. */
+  entitlement: Entitlement | null;
+  fetchEntitlement: () => Promise<void>;
+  /** Last slot-limit error (e.g. create blocked). Shown then cleared by UI. */
+  slotError: string | null;
+  clearSlotError: () => void;
+
+  /** Current subscription from /credits/subscription. */
+  subscription: Subscription | null;
+  fetchSubscription: () => Promise<void>;
+  cancelSubscription: (cancel: boolean) => Promise<void>;
+
+  /** Transient notifications (refund, success, error). */
+  toasts: Toast[];
+  pushToast: (toast: Omit<Toast, 'id'>) => void;
+  dismissToast: (id: string) => void;
+
+  /**
+   * Wipe all user-scoped state back to defaults. Called on signOut and on
+   * auth user-id change to prevent the previous user's credits/subscription/
+   * resumes from flashing on the dashboard when a different user logs in
+   * on the same browser. Also clears persisted localStorage entry.
+   */
+  reset: () => void;
+}
+
+export interface Subscription {
+  active: boolean;
+  plan?: string;
+  pack_id?: string;
+  label?: string;
+  status?: string;
+  credits_per_month?: number;
+  resume_slots?: number;
+  priority?: boolean;
+  months_elapsed?: number;
+  commitment_months?: number;
+  current_period_end?: string;
+  commitment_end?: string;
+  cancel_at_period_end?: boolean;
+  currency?: string;
+  price_paid?: number;
+}
+
+export interface Entitlement {
+  slot_limit: number;
+  slots_used: number;
+  slots_available: number;
+  priority: boolean;
+  plan: string;
+}
+
+export interface CreditPack {
+  id: string;
+  kind: string; // 'subscription' | 'one_time'
+  prices: Record<string, number | null>;
+  label: string;
+  best_for?: string;
+  // Subscription-only fields:
+  billing_interval?: string;
+  commitment_months?: number;
+  credits_per_month?: number;
+  resume_slots?: number;
+  priority?: boolean;
+  badge?: string | null;
+  // One-time refill field:
+  credits?: number;
 }
 
 const emptyResumeData: ResumeData = {
@@ -173,6 +296,99 @@ const emptyResumeData: ResumeData = {
 
 function generateId() {
   return Math.random().toString(36).substring(2, 9);
+}
+
+/**
+ * Backend POST /resumes returns the inserted row. Shape can be either:
+ *   - list[dict]  (current `execute_non_query(returning=True)` output)
+ *   - dict        (if backend later normalises)
+ * Pull `id` from either form defensively to survive shape changes.
+ */
+function extractRealId(response: any): string | null {
+  if (!response) return null;
+  if (Array.isArray(response)) return response[0]?.id ?? null;
+  if (typeof response === 'object') return response.id ?? null;
+  return null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function isRealResumeId(id: string | null | undefined): boolean {
+  return !!id && UUID_RE.test(id);
+}
+
+/**
+ * Defensive shape adaptor. DB rows can arrive in either frontend shape
+ * (`personalInfo`) or backend/engine shape (`basics`). Returning the right
+ * shape to the editor is critical — without this, post-optimization fetch
+ * overwrites the local resume with a backend-shaped object and the editor
+ * renders empty name/email/phone/location fields.
+ */
+function normalizeToFrontend(data: any): ResumeData {
+  if (!data || typeof data !== 'object') return JSON.parse(JSON.stringify(emptyResumeData));
+  // Frontend shape — pass through.
+  if (data.personalInfo) return data as ResumeData;
+  // Backend shape — convertToFrontend reads `basics` etc.
+  return convertToFrontend(data);
+}
+
+const HISTORY_CAP = 100;
+
+/**
+ * Deduplicate optimization runs and cap the list length.
+ * - Key on (resumeId, timestamp) — server rows + locally optimistic rows for
+ *   the same run share a resume/time pair within a few ms, so this collapses
+ *   them. Later entries (later in arr) override earlier ones.
+ * - Cap protects against unbounded growth across many optimization runs.
+ */
+function dedupHistory(arr: OptimizationRun[]): OptimizationRun[] {
+  const byKey = new Map<string, OptimizationRun>();
+  for (const r of arr) {
+    const key = `${r.resumeId}:${Math.floor(r.timestamp / 1000)}`;
+    byKey.set(key, r);
+  }
+  return Array.from(byKey.values())
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, HISTORY_CAP);
+}
+
+/**
+ * Debounced autosave for inline editor edits.
+ * Previously `updateResumeField` only mutated Zustand — refresh discarded edits.
+ *
+ * Strategy:
+ *  - Single window timer; resets on every keystroke.
+ *  - Only PATCHes when `currentResumeId` is a real UUID (skips optimistic IDs
+ *    still awaiting POST /resumes/ response — see Phase 1.1).
+ *  - Writes `optimized_data` because editor flow treats live state as the
+ *    "current" view; `original_data` stays as the upload baseline.
+ *  - Errors logged, not thrown — autosave is best-effort UX, not a blocking
+ *    operation.
+ */
+let _autosaveTimer: number | null = null;
+const AUTOSAVE_DEBOUNCE_MS = 1500;
+
+function scheduleAutosave(
+  getState: () => { currentResumeId: string | null; resumeData: ResumeData | null; resumes: Resume[] }
+) {
+  if (typeof window === 'undefined') return;
+  if (_autosaveTimer !== null) window.clearTimeout(_autosaveTimer);
+  _autosaveTimer = window.setTimeout(async () => {
+    _autosaveTimer = null;
+    const { currentResumeId, resumeData, resumes } = getState();
+    if (!currentResumeId || !resumeData) return;
+    if (!isRealResumeId(currentResumeId)) return; // still optimistic
+    const snapshot = resumes.find(r => r.id === currentResumeId)?.backendSnapshot;
+    try {
+      await fetchApi(`/resumes/${currentResumeId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          optimized_data: convertToBackend(resumeData, snapshot),
+        }),
+      });
+    } catch (e) {
+      console.error('Autosave failed', e);
+    }
+  }, AUTOSAVE_DEBOUNCE_MS);
 }
 
 /**
@@ -197,10 +413,13 @@ function ensureSkillsCategorized(data: any): void {
   }
 }
 
-export const useResumeStore = create<ResumeStore>((set, get) => ({
-  currentPage: 'editor',
+export const useResumeStore = create<ResumeStore>()(
+  persist(
+    (set, get) => ({
+  currentPage: 'home',
   appState: 'idle',
   resumes: [],
+  resumesLoading: false,
   currentResumeId: null,
   resumeData: null,
   history: [],
@@ -211,10 +430,27 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
   optimizationMode: 'balanced',
   liveScore: null,
   liveScoring: false,
+  credits: null,
+  creditsLoading: false,
+  creditPacks: null,
+  creditPackCurrency: 'USD',
+  entitlement: null,
+  slotError: null,
+  toasts: [],
+  subscription: null,
+  paymentsDemoMode: true,
 
   setLiveScore: (score) => set({ liveScore: score }),
   setLiveScoring: (busy) => set({ liveScoring: busy }),
-  clearOptimizationContext: () => set({ optimizationResult: null, liveScore: null, liveScoring: false }),
+  clearOptimizationContext: () => set({
+    optimizationResult: null,
+    liveScore: null,
+    liveScoring: false,
+    // Release the diff-viewer snapshot; otherwise a large resume stays
+    // referenced for the lifetime of the session.
+    preOptimizationSnapshot: null,
+    iterationTrail: [],
+  }),
 
   setCurrentPage: (page) => set({ currentPage: page }),
   
@@ -224,49 +460,225 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
   setOptimizationMode: (mode) => set({ optimizationMode: mode }),
   
   fetchResumes: async () => {
+    set({ resumesLoading: true });
     try {
-      const data = await fetchApi('/resumes/');
+      const data = await fetchApi('/resumes');
       // Map backend format to frontend format.
       // backend returns array of { id, title, original_data, ats_score, updated_at }
-      const parsedResumes: Resume[] = data.map((r: any) => ({
-        id: r.id,
-        title: r.title,
-        data: r.optimized_data || r.original_data,
-        latestScore: r.ats_score,
-        lastUpdated: new Date(r.updated_at).getTime(),
-        targetRole: r.target_role
-      }));
+      //
+      // DB row shape is mixed:
+      //   - `original_data` was written by uploadResume/createResume as
+      //     frontend shape (personalInfo / experience[].role / ...).
+      //   - `optimized_data` is written by the optimize stream + the editor
+      //     autosave as backend shape (basics / experience[].job_title / ...).
+      // `convertToFrontend` only knows backend shape — running it over an
+      // already-frontend payload would yield empty `personalInfo` etc.
+      // Detect by presence of `personalInfo` to decide.
+      const parsedResumes: Resume[] = data.map((r: any) => {
+        const rawForSnapshot = r.optimized_data || r.original_data;
+        // Snapshot only meaningful when payload is backend shape — frontend
+        // shape (original_data from uploadResume) has no `basics` etc., so
+        // skip and let live scoring fall back to defaults until next optimize.
+        const snapshot = rawForSnapshot && typeof rawForSnapshot === 'object' && rawForSnapshot.basics
+          ? rawForSnapshot
+          : undefined;
+        return {
+          id: r.id,
+          title: r.title,
+          data: normalizeToFrontend(rawForSnapshot),
+          backendSnapshot: snapshot,
+          latestScore: r.ats_score,
+          lastUpdated: new Date(r.updated_at).getTime(),
+          targetRole: r.target_role,
+          locked: !!r.locked,
+        };
+      });
       set({ resumes: parsedResumes });
+
+      // Rehydrate editor session after page reload. persist() restored
+      // currentResumeId + currentPage='editor' from localStorage, but
+      // resumeData is not persisted (large + diverges from server). Now that
+      // the resume list is fetched, populate resumeData from the matching
+      // entry so EditorPage has content. If the persisted id no longer
+      // exists (deleted on another device), fall back to resumes page.
+      const st = get();
+      if (st.currentResumeId && !st.resumeData) {
+        const match = parsedResumes.find(r => r.id === st.currentResumeId);
+        if (match) {
+          set({
+            resumeData: JSON.parse(JSON.stringify(match.data)),
+            jdText: st.jdText || match.targetRole || '',
+          });
+        } else {
+          set({ currentResumeId: null, currentPage: 'resumes' });
+        }
+      }
     } catch (e) {
       console.error("Failed to fetch resumes", e);
+    } finally {
+      set({ resumesLoading: false });
     }
   },
 
   fetchHistory: async () => {
     try {
-      const data = await fetchApi('/optimize/history'); 
+      const data = await fetchApi('/optimize/history');
       const parsedHistory: OptimizationRun[] = data.map((r: any) => ({
-        id: r.id,
+        id: r.version_id ?? r.id,
         resumeId: r.resume_id,
-        resumeTitle: r.resumes?.title || 'Unknown',
-        beforeScore: r.ats_score, // Or calculate difference
+        resumeTitle: r.title ?? r.resumes?.title ?? 'Unknown',
+        // Backend now returns explicit score_before (with LAG fallback for legacy rows).
+        beforeScore: r.score_before ?? r.ats_score,
         afterScore: r.ats_score,
-        timestamp: new Date(r.created_at).getTime()
+        timestamp: new Date(r.version_created_at ?? r.created_at).getTime(),
       }));
-      set({ history: parsedHistory });
+      // Merge with optimistic local entries so a run completed mid-fetch
+      // isn't lost, then dedupe by (resumeId, ~second) — see dedupHistory.
+      set((s) => ({ history: dedupHistory([...parsedHistory, ...s.history]) }));
     } catch (e) {
       console.error("Failed to fetch history", e);
     }
+  },
+
+  fetchCredits: async () => {
+    // Backend endpoint: GET /api/v1/profile/credits → { credits: number }
+    // Safe to call repeatedly; lightweight read.
+    set({ creditsLoading: true });
+    try {
+      const data = await fetchApi('/profile/credits');
+      const balance = typeof data?.credits === 'number' ? data.credits : null;
+      set({ credits: balance, creditsLoading: false });
+    } catch (e) {
+      console.error('Failed to fetch credits', e);
+      set({ creditsLoading: false });
+    }
+  },
+
+  setCredits: (balance) => set({ credits: balance }),
+
+  fetchCreditPacks: async () => {
+    try {
+      const data = await fetchApi('/credits/packs');
+      set({
+        creditPacks: Array.isArray(data?.packs) ? data.packs : [],
+        creditPackCurrency: data?.currency || 'USD',
+        paymentsDemoMode: !!data?.demo_mode,
+      });
+    } catch (e) {
+      console.error('Failed to fetch credit packs', e);
+    }
+  },
+
+  purchasePack: async (packId: string) => {
+    // Backend handles demo vs real fulfilment internally. Returns the new
+    // balance — we cache it locally to avoid a follow-up /credits fetch.
+    try {
+      const data = await fetchApi('/credits/purchase', {
+        method: 'POST',
+        body: JSON.stringify({ pack_id: packId }),
+      });
+      if (typeof data?.credits === 'number') {
+        set({ credits: data.credits });
+      }
+      return { added: data?.added ?? 0, balance: data?.credits ?? 0 };
+    } catch (e) {
+      console.error('Purchase failed', e);
+      return null;
+    }
+  },
+
+  fetchEntitlement: async () => {
+    try {
+      const data = await fetchApi('/credits/entitlement');
+      set({ entitlement: data });
+    } catch (e) {
+      console.error('Failed to fetch entitlement', e);
+    }
+  },
+
+  clearSlotError: () => set({ slotError: null }),
+
+  pushToast: (toast) => {
+    const id = `toast_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const full: Toast = { id, duration: 6000, ...toast };
+    set((s) => ({ toasts: [...s.toasts, full] }));
+    if (full.duration && full.duration > 0) {
+      setTimeout(() => {
+        set((s) => ({ toasts: s.toasts.filter(t => t.id !== id) }));
+      }, full.duration);
+    }
+  },
+  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter(t => t.id !== id) })),
+
+  reset: () => {
+    // Cancel any pending autosave that would PATCH the previous user's
+    // resume with stale state under the new user's session.
+    if (_autosaveTimer !== null && typeof window !== 'undefined') {
+      window.clearTimeout(_autosaveTimer);
+      _autosaveTimer = null;
+    }
+    try {
+      localStorage.removeItem('resume-store');
+    } catch {
+      // best-effort
+    }
+    set({
+      currentPage: 'home',
+      appState: 'idle',
+      resumes: [],
+      resumesLoading: false,
+      currentResumeId: null,
+      resumeData: null,
+      history: [],
+      optimizationResult: null,
+      preOptimizationSnapshot: null,
+      iterationTrail: [],
+      jdText: '',
+      optimizationMode: 'balanced',
+      liveScore: null,
+      liveScoring: false,
+      credits: null,
+      creditsLoading: false,
+      creditPacks: null,
+      creditPackCurrency: 'USD',
+      entitlement: null,
+      slotError: null,
+      subscription: null,
+      toasts: [],
+    });
+  },
+
+  fetchSubscription: async () => {
+    try {
+      const data = await fetchApi('/credits/subscription');
+      set({ subscription: data });
+    } catch (e) {
+      console.error('Failed to fetch subscription', e);
+    }
+  },
+
+  cancelSubscription: async (cancel: boolean) => {
+    const data = await fetchApi('/credits/subscription/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ cancel }),
+    });
+    set({ subscription: data });
   },
 
   exportToPdf: async () => {
     const state = get();
     if (!state.resumeData) return;
     try {
-      const backendData = convertToBackend(state.resumeData);
-      const response = await fetch('http://localhost:8000/api/v1/export', {
+      const snapshot = state.resumes.find(r => r.id === state.currentResumeId)?.backendSnapshot;
+      const backendData = convertToBackend(state.resumeData, snapshot);
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+      const response = await fetch('http://localhost:8001/api/v1/export', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           resume_json: backendData,
           format: 'pdf'
@@ -274,7 +686,15 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.detail || 'Export failed');
+        let errorMsg = 'Export failed';
+        if (errorData?.detail) {
+          if (Array.isArray(errorData.detail)) {
+             errorMsg = errorData.detail.map((e: any) => `${e.loc.join('.')}: ${e.msg}`).join(', ');
+          } else if (typeof errorData.detail === 'string') {
+             errorMsg = errorData.detail;
+          }
+        }
+        throw new Error(errorMsg);
       }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -326,63 +746,53 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
     }));
 
     try {
-      const response = await fetchApi('/resumes/', {
+      const response = await fetchApi('/resumes', {
         method: 'POST',
         body: JSON.stringify({
           title: 'Untitled Resume',
           original_data: newData
         })
       });
-      // Assuming response contains the real DB id, but since we optimistically created it,
-      // we might need to update the id. For simplicity, let's just let it be or update it.
-      if (response && response[0] && response[0].id) {
-         set((state) => ({
-           resumes: state.resumes.map(r => r.id === newId ? { ...r, id: response[0].id } : r),
-           currentResumeId: state.currentResumeId === newId ? response[0].id : state.currentResumeId
-         }));
+      const realId = extractRealId(response);
+      if (realId) {
+        set((state) => ({
+          resumes: state.resumes.map(r => r.id === newId ? { ...r, id: realId } : r),
+          currentResumeId: state.currentResumeId === newId ? realId : state.currentResumeId
+        }));
+      } else {
+        console.error("Create resume returned no usable id", response);
       }
-    } catch (e) {
+      get().fetchEntitlement();
+    } catch (e: any) {
+      // Roll back the optimistic add — it never persisted. Surface slot-limit
+      // (or any create) failure and bounce back to the library.
       console.error("Failed to create resume on backend", e);
+      set((state) => ({
+        resumes: state.resumes.filter(r => r.id !== newId),
+        currentResumeId: state.currentResumeId === newId ? null : state.currentResumeId,
+        resumeData: state.currentResumeId === newId ? null : state.resumeData,
+        currentPage: 'resumes',
+        slotError: e?.message || 'Could not create resume.',
+      }));
+      get().fetchEntitlement();
     }
   },
-  
-  uploadResume: async (data, filename = 'Uploaded Resume') => {
+
+  uploadResume: async (data, filename = 'Uploaded Resume', source) => {
+    // Strip extension + trailing "(N)" only. Removing `_optimized` previously
+    // caused collisions where "resume_optimized.pdf" silently overwrote
+    // "resume.pdf" via the old same-title branch below.
     let rawTitle = filename.replace(/\.[^/.]+$/, "");
     rawTitle = rawTitle.replace(/\s*\(\d+\)$/, "");
-    rawTitle = rawTitle.replace(/_optimized$/i, "");
-    const title = rawTitle.replace(/_/g, " ").trim();
+    const baseTitle = rawTitle.replace(/_/g, " ").trim() || 'Uploaded Resume';
 
-    const existing = get().resumes.find(
-      r => r.title.toLowerCase() === title.toLowerCase() || 
-           r.title.replace(/ /g, '_').toLowerCase() === title.replace(/ /g, '_').toLowerCase()
-    );
-
-    if (existing) {
-      const existingId = existing.id;
-      set((state) => ({
-        resumes: state.resumes.map(r => r.id === existingId ? { ...r, data, lastUpdated: Date.now() } : r),
-        currentResumeId: existingId,
-        resumeData: data,
-        currentPage: 'editor',
-        appState: 'idle',
-        optimizationResult: null,
-        liveScore: null,
-        liveScoring: false,
-        jdText: existing.targetRole || ''
-      }));
-
-      try {
-        await fetchApi(`/resumes/${existingId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            original_data: data,
-            optimized_data: null
-          })
-        });
-      } catch (e) {
-        console.error("Failed to update existing resume", e);
-      }
-      return;
+    // Auto-suffix on collision rather than overwrite — preserves the prior
+    // resume's `original_data` + version history.
+    const existingTitles = new Set(get().resumes.map(r => r.title.toLowerCase()));
+    let title = baseTitle;
+    let n = 2;
+    while (existingTitles.has(title.toLowerCase())) {
+      title = `${baseTitle} (${n++})`;
     }
 
     const newId = generateId();
@@ -406,24 +816,41 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
     }));
 
     try {
-      const response = await fetchApi('/resumes/', {
+      const response = await fetchApi('/resumes', {
         method: 'POST',
         body: JSON.stringify({
           title,
-          original_data: data
+          original_data: data,
+          // Provenance — links this resume row back to the upload that
+          // produced it. Backend re-validates ownership of session_id.
+          source_session_id: source?.sessionId,
+          source_filename:   filename,
+          source_ext:        source?.ext,
         })
       });
-      if (response && response[0] && response[0].id) {
-         set((state) => ({
-           resumes: state.resumes.map(r => r.id === newId ? { ...r, id: response[0].id } : r),
-           currentResumeId: state.currentResumeId === newId ? response[0].id : state.currentResumeId
-         }));
+      const realId = extractRealId(response);
+      if (realId) {
+        set((state) => ({
+          resumes: state.resumes.map(r => r.id === newId ? { ...r, id: realId } : r),
+          currentResumeId: state.currentResumeId === newId ? realId : state.currentResumeId
+        }));
+      } else {
+        console.error("Upload resume returned no usable id", response);
       }
-    } catch (e) {
+      get().fetchEntitlement();
+    } catch (e: any) {
       console.error("Failed to upload resume to backend", e);
+      set((state) => ({
+        resumes: state.resumes.filter(r => r.id !== newId),
+        currentResumeId: state.currentResumeId === newId ? null : state.currentResumeId,
+        resumeData: state.currentResumeId === newId ? null : state.resumeData,
+        currentPage: 'resumes',
+        slotError: e?.message || 'Could not upload resume.',
+      }));
+      get().fetchEntitlement();
     }
   },
-  
+
   openResume: (id) => {
     const resume = get().resumes.find(r => r.id === id);
     if (resume) {
@@ -452,6 +879,8 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
     
     try {
       await fetchApi(`/resumes/${id}`, { method: 'DELETE' });
+      // Refresh slot counter — a freed slot may re-enable create/upload.
+      get().fetchEntitlement();
     } catch (e) {
       console.error("Failed to delete resume on backend", e);
       // We could add the resume back to state on failure, but for simplicity we ignore.
@@ -493,6 +922,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
 
       return { resumeData: newData, resumes: updatedResumes };
     });
+    scheduleAutosave(get);
   },
 
   addBullet: (sectionType, sectionIndex, customItemIndex) => {
@@ -530,6 +960,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       
       return { resumeData: newData, resumes: updatedResumes };
     });
+    scheduleAutosave(get);
   },
 
   deleteBullet: (sectionType, sectionIndex, bulletIndex, customItemIndex) => {
@@ -558,6 +989,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       
       return { resumeData: newData, resumes: updatedResumes };
     });
+    scheduleAutosave(get);
   },
 
   addSection: (type) => {
@@ -644,6 +1076,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       
       return { resumeData: newData, resumes: updatedResumes };
     });
+    scheduleAutosave(get);
   },
 
   removeSection: (sectionId) => {
@@ -694,6 +1127,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
         : state.resumes;
       return { resumeData: newData, resumes: updatedResumes };
     });
+    scheduleAutosave(get);
   },
 
   removeItem: (sectionType, itemIndex, customSectionIndex) => {
@@ -717,6 +1151,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
         : state.resumes;
       return { resumeData: newData, resumes: updatedResumes };
     });
+    scheduleAutosave(get);
   },
 
   addItem: (sectionType, customSectionIndex) => {
@@ -764,6 +1199,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
         : state.resumes;
       return { resumeData: newData, resumes: updatedResumes };
     });
+    scheduleAutosave(get);
   },
 
   reorderSections: (startIndex, endIndex) => {
@@ -789,7 +1225,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       result.splice(endIndex, 0, removed);
       
       newData.sectionOrder = result;
-      
+
       const updatedResumes = state.currentResumeId
         ? state.resumes.map(r =>
             r.id === state.currentResumeId
@@ -797,11 +1233,12 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
               : r
           )
         : state.resumes;
-      
+
       return { resumeData: newData, resumes: updatedResumes };
     });
+    scheduleAutosave(get);
   },
-  
+
   startOptimization: () => set((state) => ({
     appState: 'processing',
     // Snapshot current resume before optimizer mutates it (for diff viewer).
@@ -814,11 +1251,23 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       .sort((a, b) => a.iteration - b.iteration),
   })),
   
-  completeOptimization: (optimizedData, resultPayload) => set((state) => {
-    if (!state.currentResumeId) return state;
+  completeOptimization: (optimizedData, resultPayload) => {
+    // After the SSE stream wrote the new version + updated `optimized_data` on
+    // the resumes row, re-fetch lists so the local cache reflects DB truth
+    // (titles, scores, history deltas, version id mappings).
+    // Fire-and-forget — UI still updates immediately from the set() below.
+    setTimeout(() => {
+      get().fetchResumes().catch(() => {});
+      get().fetchHistory().catch(() => {});
+    }, 50);
 
-    const currentResume = state.resumes.find(r => r.id === state.currentResumeId);
-    const beforeScore = resultPayload.initial_score || currentResume?.latestScore || Math.floor(Math.random() * 16) + 50;
+    set((state) => {
+      if (!state.currentResumeId) return state;
+
+      const currentResume = state.resumes.find(r => r.id === state.currentResumeId);
+    // `??` — treat 0 as a valid score. No random fallback: synthetic data poisoned history before.
+    const beforeScore: number =
+      resultPayload.initial_score ?? currentResume?.latestScore ?? 0;
     
     const newRun: OptimizationRun = {
       id: generateId(),
@@ -829,9 +1278,20 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       timestamp: Date.now()
     };
     
-    const updatedResumes = state.resumes.map(r => 
-      r.id === state.currentResumeId 
-        ? { ...r, data: optimizedData, latestScore: resultPayload.final_score, lastUpdated: Date.now() }
+    // resultPayload.optimized_resume is the raw backend best_resume with
+    // engine-only fields (technologies, location, gpa). Stash so live score
+    // matches the recorded best_score until user edits diverge from snapshot.
+    const newSnapshot = resultPayload.optimized_resume || undefined;
+
+    const updatedResumes = state.resumes.map(r =>
+      r.id === state.currentResumeId
+        ? {
+            ...r,
+            data: optimizedData,
+            backendSnapshot: newSnapshot ?? r.backendSnapshot,
+            latestScore: resultPayload.final_score,
+            lastUpdated: Date.now(),
+          }
         : r
     );
     
@@ -839,7 +1299,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       appState: 'results',
       resumeData: optimizedData,
       resumes: updatedResumes,
-      history: [newRun, ...state.history],
+      history: dedupHistory([newRun, ...state.history]),
       optimizationResult: {
         initialScore: beforeScore,
         finalScore: resultPayload.final_score,
@@ -855,7 +1315,8 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
         targetRole: state.jdText ? state.jdText : undefined,
       }
     };
-  }),
+    });
+  },
 
   saveJdText: async (jdText: string) => {
     const state = get();
@@ -879,16 +1340,14 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
     const state = get();
     if (!state.resumeData || !state.optimizationResult) return;
     try {
-      const res = await fetch('http://localhost:8000/api/v1/optimize/score-only', {
+      const snapshot = state.resumes.find(r => r.id === state.currentResumeId)?.backendSnapshot;
+      const data = await fetchApi('/optimize/score-only', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          resume_json: convertToBackend(state.resumeData),
+          resume_json: convertToBackend(state.resumeData, snapshot),
           jd_text: state.jdText || '',
         }),
       });
-      if (!res.ok) return;
-      const data = await res.json();
       const score = typeof data?.score === 'number' ? Math.round(data.score) : null;
       if (score === null) return;
       set((s) => {
@@ -905,7 +1364,22 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       // Silent — snapshot stays visible on failure.
     }
   },
-}));
+    }),
+    {
+      name: 'resume-store',
+      storage: createJSONStorage(() => localStorage),
+      // Persist only routing + selection + edit-time UI state. resumeData
+      // itself is re-derived from `resumes[].data` after fetchResumes()
+      // resolves — see rehydrate hook in fetchResumes.
+      partialize: (state) => ({
+        currentPage: PERSISTABLE_PAGES.has(state.currentPage) ? state.currentPage : 'home',
+        currentResumeId: state.currentResumeId,
+        jdText: state.jdText,
+        optimizationMode: state.optimizationMode,
+      }),
+    }
+  )
+);
 
 export const mockResumeData: ResumeData = {
   personalInfo: {
@@ -953,10 +1427,43 @@ export const mockResumeData: ResumeData = {
   }
 };
 
-export function convertToBackend(frontendData: ResumeData): any {
+/**
+ * Snapshot-aware conversion.
+ *
+ * Frontend `ResumeData` intentionally omits engine-only fields the editor
+ * doesn't render (experience.technologies, experience.location, education.gpa
+ * etc.). Without a snapshot, these defaulted to `""` / `[]` on every
+ * round-trip — silently stripping keyword-density signal the scorer rewards.
+ * Result: live score dropped below the score recorded at end of optimization
+ * (e.g. 88 → 85).
+ *
+ * `snapshot` is the most recent backend-shape payload we saw (from optimizer
+ * complete event, or DB `optimized_data`). For each index, if the corresponding
+ * frontend item still matches its snapshot anchor (company+job_title for
+ * experience, school+degree for education), copy the hidden fields. If the
+ * user reordered/renamed, anchor mismatches and hidden fields revert to
+ * defaults — correct, because we no longer know they apply.
+ */
+function _expAnchorMatch(snap: any, fe: any): boolean {
+  return (
+    (snap?.company || '').trim().toLowerCase() === (fe?.company || '').trim().toLowerCase() &&
+    (snap?.job_title || '').trim().toLowerCase() === (fe?.role || '').trim().toLowerCase()
+  );
+}
+function _eduAnchorMatch(snap: any, fe: any): boolean {
+  return (
+    (snap?.institution || '').trim().toLowerCase() === (fe?.school || '').trim().toLowerCase() &&
+    (snap?.degree || '').trim().toLowerCase() === (fe?.degree || '').trim().toLowerCase()
+  );
+}
+
+export function convertToBackend(frontendData: ResumeData, snapshot?: any): any {
   const personalInfo = frontendData.personalInfo || { name: "", email: "", phone: "", location: "", links: [] };
   const links = personalInfo.links || [];
-  
+
+  const snapExp: any[] = Array.isArray(snapshot?.experience) ? snapshot.experience : [];
+  const snapEdu: any[] = Array.isArray(snapshot?.education) ? snapshot.education : [];
+
   return {
     basics: {
       name: personalInfo.name || "",
@@ -970,27 +1477,31 @@ export function convertToBackend(frontendData: ResumeData): any {
       links,
     },
     summary: frontendData.summary || "",
-    experience: (frontendData.experience || []).map((exp: any) => {
+    experience: (frontendData.experience || []).map((exp: any, i: number) => {
       const [startDate = "", endDate = ""] = (exp.date || "").split("-").map((s: string) => s.trim());
+      const snap = snapExp[i];
+      const matched = snap && _expAnchorMatch(snap, exp);
       return {
         company: exp.company || "",
         job_title: exp.role || "",
         start_date: startDate,
         end_date: endDate,
-        location: "",
+        location: matched ? (snap.location || "") : "",
         bullets: exp.bullets || [],
-        technologies: []
+        technologies: matched && Array.isArray(snap.technologies) ? snap.technologies : []
       };
     }),
-    education: (frontendData.education || []).map((edu: any) => {
+    education: (frontendData.education || []).map((edu: any, i: number) => {
       const [startDate = "", endDate = ""] = (edu.date || "").split("-").map((s: string) => s.trim());
+      const snap = snapEdu[i];
+      const matched = snap && _eduAnchorMatch(snap, edu);
       return {
         institution: edu.school || "",
         degree: edu.degree || "",
         start_date: startDate,
         end_date: endDate,
-        gpa: "",
-        location: ""
+        gpa: matched ? (snap.gpa || "") : "",
+        location: matched ? (snap.location || "") : ""
       };
     }),
     projects: (frontendData.projects || []).map((proj: any) => {
@@ -1020,6 +1531,7 @@ export function convertToBackend(frontendData: ResumeData): any {
       tools: frontendData.skills?.tools || []
     },
     custom_sections: frontendData.customSections || [],
+    section_order: frontendData.sectionOrder || [],
     other: ""
   };
 }
