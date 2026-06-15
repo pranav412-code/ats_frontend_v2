@@ -1,6 +1,10 @@
 import { supabase } from './supabase';
 
-const API_BASE = 'http://localhost:8001/api/v1';
+// API origin is env-driven (set VITE_API_URL in .env). Falls back to the
+// deployed Render backend so the app works without a local backend running.
+export const API_ORIGIN =
+  import.meta.env.VITE_API_URL ?? 'https://resume-craft-backend-1r57.onrender.com';
+const API_BASE = `${API_ORIGIN}/api/v1`;
 
 async function buildHeaders(options: RequestInit): Promise<Headers> {
   const headers = new Headers(options.headers || {});

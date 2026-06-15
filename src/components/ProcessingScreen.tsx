@@ -2,6 +2,7 @@ import React, { useEffect, useReducer, useRef, useState } from 'react';
 import { useResumeStore, convertToBackend, convertToFrontend } from '../store/useResumeStore';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { API_ORIGIN } from '../lib/api';
 import {
   initialViewState,
   reduceView,
@@ -66,7 +67,7 @@ export function ProcessingScreen() {
           max_iterations: mode === 'quick' ? 1 : mode === 'deep' ? 3 : 2,
           mode,
         };
-        const res = await fetch('http://localhost:8001/api/v1/optimize/stream', {
+        const res = await fetch(`${API_ORIGIN}/api/v1/optimize/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
           body: JSON.stringify(payload),

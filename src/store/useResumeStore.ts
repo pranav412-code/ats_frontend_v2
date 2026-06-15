@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { fetchApi } from '../lib/api';
+import { fetchApi, API_ORIGIN } from '../lib/api';
 import { supabase } from '../lib/supabase';
 
 // Pages safe to restore after reload. Transient flows (payment_*, landing,
@@ -12,7 +12,7 @@ const PERSISTABLE_PAGES = new Set<Page>([
   'privacy', 'terms', 'refund', 'contact',
 ]);
 
-export type Page = 'landing' | 'home' | 'editor' | 'resumes' | 'history' | 'profile' | 'security' | 'subscription' | 'pricing' | 'payment_waiting' | 'payment_success' | 'payment_failed' | 'transactions' | 'privacy' | 'terms' | 'refund' | 'contact';
+export type Page = 'home' | 'editor' | 'resumes' | 'history' | 'profile' | 'security' | 'subscription' | 'pricing' | 'payment_waiting' | 'payment_success' | 'payment_failed' | 'transactions' | 'privacy' | 'terms' | 'refund' | 'contact';
 export type AppState = 'idle' | 'processing' | 'results';
 
 export interface CustomSection {
@@ -676,7 +676,7 @@ export const useResumeStore = create<ResumeStore>()(
       if (session?.access_token) {
         headers['Authorization'] = `Bearer ${session.access_token}`;
       }
-      const response = await fetch('http://localhost:8001/api/v1/export', {
+      const response = await fetch(`${API_ORIGIN}/api/v1/export`, {
         method: 'POST',
         headers,
         body: JSON.stringify({

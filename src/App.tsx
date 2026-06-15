@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useResumeStore } from './store/useResumeStore';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
@@ -7,7 +7,6 @@ import { ResumesPage } from './pages/ResumesPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { HomePage } from './pages/HomePage';
 import { AuthPage } from './pages/AuthPage';
-import { LandingPage } from './pages/LandingPage';
 import { PasswordRecoveryPage } from './pages/PasswordRecoveryPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { SecurityPage } from './pages/SecurityPage';
@@ -26,9 +25,8 @@ import { ContactPage } from './pages/legal/ContactPage';
 import { Loader2 } from 'lucide-react';
 
 export default function App() {
-  const { currentPage, setCurrentPage, fetchResumes, fetchHistory, fetchCredits, fetchEntitlement, fetchSubscription } = useResumeStore();
+  const { currentPage, fetchResumes, fetchHistory, fetchCredits, fetchEntitlement, fetchSubscription } = useResumeStore();
   const { session, initialized, initialize, recoveryMode, clearRecoveryMode } = useAuthStore();
-  const [isAuthView, setIsAuthView] = useState(false);
 
   useEffect(() => {
     initialize();
@@ -57,14 +55,12 @@ export default function App() {
   }
 
   if (!session) {
-    if (isAuthView) {
-      return <AuthPage onBack={() => setIsAuthView(false)} />;
-    }
-    return <LandingPage onGoToAuth={() => setIsAuthView(true)} />;
-  }
-
-  if (session && currentPage === 'landing') {
-    return <LandingPage onGoToAuth={() => setCurrentPage('home')} isLoggedIn={true} />;
+    // No marketing landing here — the standalone marketing site owns that.
+    // Unauthenticated visitors go straight to auth; arrivals carrying the
+    // marketing CTA param (?src=marketing) open on the sign-up tab.
+    const fromMarketing =
+      new URLSearchParams(window.location.search).get('src') === 'marketing';
+    return <AuthPage initialMode={fromMarketing ? 'signup' : 'login'} />;
   }
 
   return (

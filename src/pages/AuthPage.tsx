@@ -9,10 +9,12 @@ type Mode = 'login' | 'signup' | 'forgot';
 
 interface AuthPageProps {
   onBack?: () => void;
+  /** Initial tab — marketing CTAs deep-link here in 'signup'. Defaults to login. */
+  initialMode?: Mode;
 }
 
-export function AuthPage({ onBack }: AuthPageProps) {
-  const [mode, setMode] = useState<Mode>('login');
+export function AuthPage({ onBack, initialMode = 'login' }: AuthPageProps) {
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
