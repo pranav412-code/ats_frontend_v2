@@ -167,9 +167,9 @@ export function AuthPage({ onBack, initialMode = 'login' }: AuthPageProps) {
           </button>
         )}
         <div className="text-center mb-10">
-          <img src="/logo.png" className="h-16 w-auto object-contain mx-auto mb-6" alt="Resume Optimizer Logo" />
+          <img src="/logo.png" className="h-16 w-auto object-contain mx-auto mb-6" alt="Resume Craft Logo" />
           <h1 className="font-serif text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">
-            Resume Optimizer
+            Resume Craft
           </h1>
           <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 mt-3">
             Editorial Edition
