@@ -50,7 +50,7 @@ export function KeywordCoverage({ resume, missing, jdKeywords }: Props) {
   const missingDisplay = showAllMissing ? missing : missing.slice(0, MAX_MISSING_DISPLAY);
 
   return (
-    <section className="border border-zinc-300 dark:border-zinc-700 p-6 sm:p-8 mb-10">
+    <section className="border border-zinc-300 dark:border-zinc-700 p-4 sm:p-8 mb-10 max-sm:overflow-hidden">
       <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-zinc-700 dark:text-zinc-300 mb-3">
         <Key size={12} />
         Keyword Coverage
@@ -72,7 +72,7 @@ export function KeywordCoverage({ resume, missing, jdKeywords }: Props) {
                 initial={{ opacity: 0, scale: 0.92 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.25, delay: i * 0.02 }}
-                className="px-2.5 py-1 border border-emerald-700/40 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 bg-emerald-500/[0.06] font-mono text-[11px] uppercase tracking-wider"
+                className="px-2.5 py-1 border border-emerald-700/40 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 bg-emerald-500/[0.06] font-mono text-[11px] uppercase tracking-wider max-sm:break-words max-sm:max-w-full"
               >
                 {kw}
               </motion.span>
@@ -95,7 +95,7 @@ export function KeywordCoverage({ resume, missing, jdKeywords }: Props) {
                 initial={{ opacity: 0, scale: 0.92 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.25, delay: i * 0.02 }}
-                className="px-2.5 py-1 border border-amber-700/40 dark:border-amber-500/40 text-amber-800 dark:text-amber-300 bg-amber-500/[0.06] font-mono text-[11px] uppercase tracking-wider"
+                className="px-2.5 py-1 border border-amber-700/40 dark:border-amber-500/40 text-amber-800 dark:text-amber-300 bg-amber-500/[0.06] font-mono text-[11px] uppercase tracking-wider max-sm:break-words max-sm:max-w-full"
               >
                 {kw}
               </motion.span>

@@ -59,6 +59,12 @@ export function InlineEditableText({
   }, [currentValue]);
 
   useEffect(() => {
+    if (startEditing) {
+      setIsEditing(true);
+    }
+  }, [startEditing]);
+
+  useEffect(() => {
     onEditStateChange?.(isEditing);
   }, [isEditing, onEditStateChange]);
 

@@ -98,21 +98,43 @@ function MiniRing({ score, size, animate, label }: { score: number; size: number
 export function ScoreStory({ before, after }: Props) {
   const delta = after - before;
   const tone = tierFromScore(after).tone;
+  const liftToneClass = `${TONE_BADGE[tone].split(' ')[0]} ${TONE_BADGE[tone].split(' ')[1]}`;
+
   return (
-    <div className="flex items-center justify-center gap-6 sm:gap-10 flex-wrap">
-      <MiniRing score={before} size={120} animate={false} label="Before" />
-      <ArrowRight className="text-zinc-400 hidden sm:block" />
-      <MiniRing score={after} size={160} animate label="After" />
-      {delta > 0 && (
-        <div className={`flex flex-col items-center justify-center ml-2`}>
-          <span className={`text-[10px] font-mono uppercase tracking-widest font-bold ${TONE_BADGE[tone].split(' ')[0]}`}>
-            Lift
-          </span>
-          <span className={`text-5xl font-black font-mono tabular-nums ${TONE_BADGE[tone].split(' ')[0]} ${TONE_BADGE[tone].split(' ')[1]}`}>
-            +{delta}
-          </span>
-        </div>
-      )}
-    </div>
+    <>
+      {/* Desktop — original horizontal layout */}
+      <div className="hidden sm:flex items-center justify-center gap-6 sm:gap-10 flex-wrap">
+        <MiniRing score={before} size={120} animate={false} label="Before" />
+        <ArrowRight className="text-zinc-400" />
+        <MiniRing score={after} size={160} animate label="After" />
+        {delta > 0 && (
+          <div className="flex flex-col items-center justify-center ml-2">
+            <span className={`text-[10px] font-mono uppercase tracking-widest font-bold ${TONE_BADGE[tone].split(' ')[0]}`}>
+              Lift
+            </span>
+            <span className={`text-5xl font-black font-mono tabular-nums ${liftToneClass}`}>
+              +{delta}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Mobile — stacked layout */}
+      <div className="flex sm:hidden flex-col items-center gap-5">
+        <MiniRing score={before} size={100} animate={false} label="Before" />
+        <ArrowRight className="text-zinc-400 rotate-90 shrink-0" size={20} />
+        <MiniRing score={after} size={132} animate label="After" />
+        {delta > 0 && (
+          <div className="flex flex-col items-center justify-center pt-1 border-t border-zinc-200 dark:border-zinc-800 w-full">
+            <span className={`text-[10px] font-mono uppercase tracking-widest font-bold ${TONE_BADGE[tone].split(' ')[0]}`}>
+              Lift
+            </span>
+            <span className={`text-4xl font-black font-mono tabular-nums ${liftToneClass}`}>
+              +{delta}
+            </span>
+          </div>
+        )}
+      </div>
+    </>
   );
 }

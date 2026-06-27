@@ -140,7 +140,7 @@ export function BulletDiffViewer({ before, after }: Props) {
   const visible = showAll ? groups : groups.slice(0, 3);
 
   return (
-    <section className="border border-zinc-300 dark:border-zinc-700 p-6 sm:p-8 mb-10 rounded-xl bg-white dark:bg-zinc-900/50 shadow-sm">
+    <section className="border border-zinc-300 dark:border-zinc-700 p-4 sm:p-8 mb-10 rounded-xl bg-white dark:bg-zinc-900/50 shadow-sm max-sm:overflow-hidden">
       <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-zinc-700 dark:text-zinc-300 mb-1">
         <Sparkles size={12} className="text-indigo-500" />
         What Changed
@@ -149,7 +149,7 @@ export function BulletDiffViewer({ before, after }: Props) {
         Review the exact edits made to your resume content to improve ATS alignment.
       </p>
 
-      <div className="space-y-10">
+      <div className="space-y-6 sm:space-y-10">
         {visible.map((group, i) => (
           <motion.div
             key={group.id}
@@ -157,10 +157,11 @@ export function BulletDiffViewer({ before, after }: Props) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: i * 0.06 }}
           >
-            <div className="flex items-center gap-3 mb-4 pb-3 border-b border-zinc-200 dark:border-zinc-800">
-              <SectionIcon section={group.section} />
-              <div>
-                <h3 className="font-sans text-base font-semibold text-zinc-900 dark:text-zinc-100 flex items-baseline gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 mb-4 pb-3 border-b border-zinc-200 dark:border-zinc-800">
+              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                <SectionIcon section={group.section} />
+                <div className="min-w-0">
+                <h3 className="font-sans text-sm sm:text-base font-semibold text-zinc-900 dark:text-zinc-100 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   {group.title}
                   {group.date && (
                     <span className="font-mono text-[10px] font-normal uppercase tracking-widest text-zinc-400">
@@ -169,10 +170,11 @@ export function BulletDiffViewer({ before, after }: Props) {
                   )}
                 </h3>
                 {group.subtitle && (
-                  <span className="font-mono text-[11px] uppercase tracking-wider text-zinc-500">
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-zinc-500 break-words">
                     {group.subtitle}
                   </span>
                 )}
+                </div>
               </div>
             </div>
 

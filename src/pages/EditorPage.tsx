@@ -1,8 +1,21 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useResumeStore, convertToBackend } from '../store/useResumeStore';
 import { UploadSection } from '../components/UploadSection';
 import { ResumePreview } from '../components/ResumePreview';
-import { Download, Sparkles, Loader2, Plus, UploadCloud, LayoutDashboard, ArrowLeft, Lock } from 'lucide-react';
+import {
+  Download,
+  Sparkles,
+  Loader2,
+  Plus,
+  UploadCloud,
+  LayoutDashboard,
+  ArrowLeft,
+  Lock,
+  Check,
+  CloudOff,
+  ChevronDown,
+  FileText,
+} from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ProcessingScreen } from '../components/ProcessingScreen';
 import { ResultsPage } from './ResultsPage';
@@ -21,6 +34,30 @@ function hasMeaningfulContent(data: any): boolean {
   if ((data.projects || []).some((p: any) => p.title || (p.bullets || []).some((b: string) => b?.trim()))) return true;
   if ((data.skills || []).length > 0) return true;
   return false;
+}
+
+function AutosaveIndicator({ status }: { status: 'idle' | 'pending' | 'saving' | 'saved' | 'error' }) {
+  if (status === 'idle') return null;
+  const label =
+    status === 'pending' ? 'Unsaved changes…'
+    : status === 'saving' ? 'Saving…'
+    : status === 'saved' ? 'All changes saved'
+    : 'Save failed';
+  const Icon = status === 'saved' ? Check : status === 'error' ? CloudOff : Loader2;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest',
+        status === 'saved' && 'text-emerald-600 dark:text-emerald-400',
+        status === 'error' && 'text-red-600 dark:text-red-400',
+        (status === 'pending' || status === 'saving') && 'text-zinc-500 dark:text-zinc-400',
+      )}
+      aria-live="polite"
+    >
+      <Icon size={10} className={status === 'pending' || status === 'saving' ? 'animate-spin' : undefined} />
+      {label}
+    </span>
+  );
 }
 
 export function EditorPage() {
@@ -43,12 +80,14 @@ export function EditorPage() {
     setCurrentPage,
     resumes,
     currentResumeId,
+    autosaveStatus,
   } = useResumeStore();
+  const [showMobileResume, setShowMobileResume] = useState(false);
+
   const currentResume = resumes.find(r => r.id === currentResumeId);
   const backendSnapshot = currentResume?.backendSnapshot;
   const isLocked = !!currentResume?.locked;
 
-  // Debounced live ATS scoring on every edit
   React.useEffect(() => {
     if (!resumeData) return;
     if (!hasMeaningfulContent(resumeData)) {
@@ -75,8 +114,7 @@ export function EditorPage() {
             ? data.ats_score
             : null;
         if (score !== null) setLiveScore(Math.round(score));
-        
-        // Save the JD text so it persists on page reload
+
         saveJdText(jdText);
       } catch (e: any) {
         if (e.name !== 'AbortError') {
@@ -100,165 +138,224 @@ export function EditorPage() {
 
   const displayScore = liveScore ?? 0;
 
-  return (
-    <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-6rem)] pt-4 pb-2 lg:pb-0">
-      {/* Left side - Resume Preview */}
-      <div className="flex-1 lg:w-3/4 flex flex-col min-h-0 relative min-h-[600px] lg:min-h-0 lg:h-full gap-3">
+  const optimizeButtonClass =
+    'w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+
+  const downloadButtonClass =
+    'w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-900 dark:border-zinc-100 font-mono uppercase tracking-widest text-[11px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+
+  const lockedBanner = isLocked && (
+    <div className="p-3 border border-amber-300 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400 text-[11px] font-mono leading-relaxed flex items-start gap-2">
+      <Lock size={13} className="shrink-0 mt-0.5" />
+      <span>Read-only — over plan limit. Resubscribe or delete other resumes to edit.</span>
+    </div>
+  );
+
+  const scoreSection = (
+    <div className="flex flex-col items-center">
+      <div className="w-full flex items-center justify-between mb-3">
+        <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500">
+          Live ATS Score
+        </p>
+        <AutosaveIndicator status={autosaveStatus} />
+      </div>
+      <ScoreGauge score={displayScore} size="sm" />
+      <div className="mt-3 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
+        {liveScoring ? (
+          <>
+            <Loader2 size={10} className="animate-spin" />
+            <span>Scoring…</span>
+          </>
+        ) : liveScore === null ? (
+          <span className="font-serif italic normal-case tracking-normal text-sm text-zinc-500">
+            Add content to score
+          </span>
+        ) : (
+          <>
+            <span className="w-1.5 h-1.5 bg-emerald-500 animate-pulse" />
+            <span>Live · updates as you type</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  const modeSection = (
+    <div>
+      <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 mb-3">
+        Optimization Mode
+      </p>
+      <div className="grid grid-cols-3 border border-zinc-300 dark:border-zinc-700">
+        {(['quick', 'balanced', 'deep'] as const).map((mode, idx) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => setOptimizationMode(mode)}
+            className={cn(
+              'py-2.5 text-[11px] font-mono uppercase tracking-widest font-bold transition-colors',
+              idx > 0 && 'border-l border-zinc-300 dark:border-zinc-700',
+              optimizationMode === mode
+                ? 'bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900'
+                : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60',
+            )}
+          >
+            {mode}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  const jdSection = (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500">
+          Job Description
+        </p>
+        {jdText.trim().length > 0 ? (
+          <span
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10px] font-mono uppercase tracking-[0.2em] font-bold"
+            title="JD mode active — optimization will tailor to this job description"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            JD Mode
+          </span>
+        ) : (
+          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-600">
+            Generic Mode
+          </span>
+        )}
+      </div>
+      <textarea
+        value={jdText}
+        onChange={(e) => setJdText(e.target.value)}
+        placeholder="Paste target job description here to tailor your resume..."
+        className={cn(
+          'w-full h-32 px-3 py-2.5 bg-white dark:bg-zinc-950 border font-serif text-sm focus:outline-none text-zinc-800 dark:text-zinc-100 placeholder:italic placeholder-zinc-400 dark:placeholder-zinc-600 resize-none transition-colors',
+          jdText.trim().length > 0
+            ? 'border-emerald-500/50 focus:border-emerald-600 dark:focus:border-emerald-400'
+            : 'border-zinc-300 dark:border-zinc-700 focus:border-zinc-900 dark:focus:border-zinc-100',
+        )}
+      />
+      {jdText.trim().length > 0 && (
+        <p className="mt-2 text-[10px] font-mono text-zinc-500 dark:text-zinc-400">
+          {jdText.trim().split(/\s+/).length} words · keywords will be extracted on optimize
+        </p>
+      )}
+    </div>
+  );
+
+  const primaryActions = (
+    <div className="space-y-2">
+      {lockedBanner}
+      <button
+        onClick={() => startOptimization()}
+        disabled={isLocked}
+        title={isLocked ? 'Resume locked — over plan limit' : undefined}
+        className={optimizeButtonClass}
+      >
+        <Sparkles size={13} strokeWidth={2.5} />
+        Optimize Resume
+      </button>
+      <button onClick={() => exportToPdf()} className={downloadButtonClass}>
+        <Download size={13} strokeWidth={2.5} />
+        Download PDF
+      </button>
+    </div>
+  );
+
+  const navActions = (
+    <div className="space-y-2">
+      <button
+        onClick={() => setCurrentPage('resumes')}
+        className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[10px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+      >
+        <LayoutDashboard size={12} strokeWidth={2.5} />
+        Resume Dashboard
+      </button>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={() => createResume()}
+          className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[10px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+        >
+          <Plus size={12} strokeWidth={2.5} />
+          New
+        </button>
         <button
           onClick={() => goToUpload()}
-          className="self-start inline-flex items-center gap-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 font-mono uppercase tracking-widest text-[10px] font-bold transition-colors pl-1"
+          className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[10px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
         >
-          <ArrowLeft size={12} strokeWidth={2.5} />
-          Back to Upload
+          <UploadCloud size={12} strokeWidth={2.5} />
+          Upload
         </button>
-        <div className="flex-1 min-h-0 relative">
-          <ResumePreview />
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-4 lg:gap-6 lg:h-[calc(100vh-6rem)] pt-4 pb-2 lg:pb-0">
+      {/* ── Mobile: optimize-first flow, resume on demand ── */}
+      <div className="lg:hidden flex flex-col gap-4">
+        <div className="border border-zinc-300 dark:border-zinc-700 bg-white/60 dark:bg-zinc-900/40 flex flex-col divide-y divide-zinc-300 dark:divide-zinc-700">
+          <div className="p-5">{navActions}</div>
+          <div className="p-5">{scoreSection}</div>
+          <div className="p-5">{modeSection}</div>
+          <div className="p-5">{jdSection}</div>
+          <div className="p-5">{primaryActions}</div>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowMobileResume((v) => !v)}
+          aria-expanded={showMobileResume}
+          className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[11px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+        >
+          <FileText size={14} strokeWidth={2.5} />
+          {showMobileResume ? 'Hide parsed resume' : 'View your parsed resume'}
+          <ChevronDown
+            size={14}
+            className={cn('transition-transform duration-200', showMobileResume && 'rotate-180')}
+          />
+        </button>
+
+        {showMobileResume && (
+          <div className="flex flex-col gap-3 min-h-[480px]">
+            <button
+              onClick={() => goToUpload()}
+              className="self-start inline-flex items-center gap-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 font-mono uppercase tracking-widest text-[10px] font-bold transition-colors pl-1"
+            >
+              <ArrowLeft size={12} strokeWidth={2.5} />
+              Back to Upload
+            </button>
+            <div className="relative min-h-[420px]">
+              <ResumePreview />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Right side - Actions Panel */}
-      <div className="w-full lg:w-1/4 flex flex-col gap-0 lg:h-full overflow-y-auto pr-1">
-        <div className="border border-zinc-300 dark:border-zinc-700 bg-white/60 dark:bg-zinc-900/40 flex flex-col">
-          {/* Navigation & File Actions */}
-          <div className="p-5 border-b border-zinc-300 dark:border-zinc-700 space-y-2">
-            <button
-              onClick={() => setCurrentPage('resumes')}
-              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[10px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            >
-              <LayoutDashboard size={12} strokeWidth={2.5} />
-              Resume Dashboard
-            </button>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => createResume()}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[10px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-              >
-                <Plus size={12} strokeWidth={2.5} />
-                New
-              </button>
-              <button
-                onClick={() => goToUpload()}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 font-mono uppercase tracking-widest text-[10px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-              >
-                <UploadCloud size={12} strokeWidth={2.5} />
-                Upload
-              </button>
-            </div>
+      {/* ── Desktop: side-by-side editor + sidebar ── */}
+      <div className="hidden lg:flex flex-row gap-6 flex-1 min-h-0">
+        <div className="flex-1 lg:w-3/4 flex flex-col min-h-0 relative lg:h-full gap-3">
+          <button
+            onClick={() => goToUpload()}
+            className="self-start inline-flex items-center gap-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 font-mono uppercase tracking-widest text-[10px] font-bold transition-colors pl-1"
+          >
+            <ArrowLeft size={12} strokeWidth={2.5} />
+            Back to Upload
+          </button>
+          <div className="flex-1 min-h-0 relative">
+            <ResumePreview />
           </div>
+        </div>
 
-          {/* Live ATS Score */}
-          <div className="p-5 border-b border-zinc-300 dark:border-zinc-700 flex flex-col items-center">
-            <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 mb-3 self-start">
-              Live ATS Score
-            </p>
-            <ScoreGauge score={displayScore} size="sm" />
-            <div className="mt-3 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
-              {liveScoring ? (
-                <>
-                  <Loader2 size={10} className="animate-spin" />
-                  <span>Scoring…</span>
-                </>
-              ) : liveScore === null ? (
-                <span className="font-serif italic normal-case tracking-normal text-sm text-zinc-500">
-                  Add content to score
-                </span>
-              ) : (
-                <>
-                  <span className="w-1.5 h-1.5 bg-emerald-500 animate-pulse" />
-                  <span>Live · updates as you type</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Job Description */}
-          <div className="p-5 border-b border-zinc-300 dark:border-zinc-700">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500">
-                Job Description
-              </p>
-              {jdText.trim().length > 0 ? (
-                <span
-                  className="inline-flex items-center gap-1.5 px-2 py-0.5 border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10px] font-mono uppercase tracking-[0.2em] font-bold"
-                  title="JD mode active — optimization will tailor to this job description"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  JD Mode
-                </span>
-              ) : (
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-600">
-                  Generic Mode
-                </span>
-              )}
-            </div>
-            <textarea
-              value={jdText}
-              onChange={(e) => setJdText(e.target.value)}
-              placeholder="Paste target job description here to tailor your resume..."
-              className={cn(
-                'w-full h-32 px-3 py-2.5 bg-white dark:bg-zinc-950 border font-serif text-sm focus:outline-none text-zinc-800 dark:text-zinc-100 placeholder:italic placeholder-zinc-400 dark:placeholder-zinc-600 resize-none transition-colors',
-                jdText.trim().length > 0
-                  ? 'border-emerald-500/50 focus:border-emerald-600 dark:focus:border-emerald-400'
-                  : 'border-zinc-300 dark:border-zinc-700 focus:border-zinc-900 dark:focus:border-zinc-100'
-              )}
-            />
-            {jdText.trim().length > 0 && (
-              <p className="mt-2 text-[10px] font-mono text-zinc-500 dark:text-zinc-400">
-                {jdText.trim().split(/\s+/).length} words · keywords will be extracted on optimize
-              </p>
-            )}
-          </div>
-
-          {/* Optimization Mode */}
-          <div className="p-5 border-b border-zinc-300 dark:border-zinc-700">
-            <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 mb-3">
-              Optimization Mode
-            </p>
-            <div className="grid grid-cols-3 border border-zinc-300 dark:border-zinc-700">
-              {(['quick', 'balanced', 'deep'] as const).map((mode, idx) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setOptimizationMode(mode)}
-                  className={cn(
-                    'py-2.5 text-[11px] font-mono uppercase tracking-widest font-bold transition-colors',
-                    idx > 0 && 'border-l border-zinc-300 dark:border-zinc-700',
-                    optimizationMode === mode
-                      ? 'bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900'
-                      : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
-                  )}
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="p-5 space-y-2">
-            {isLocked && (
-              <div className="mb-1 p-3 border border-amber-300 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400 text-[11px] font-mono leading-relaxed flex items-start gap-2">
-                <Lock size={13} className="shrink-0 mt-0.5" />
-                <span>Read-only — over plan limit. Resubscribe or delete other resumes to edit.</span>
-              </div>
-            )}
-            <button
-              onClick={() => startOptimization()}
-              disabled={isLocked}
-              title={isLocked ? 'Resume locked — over plan limit' : undefined}
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Sparkles size={13} strokeWidth={2.5} />
-              Optimize Resume
-            </button>
-
-            <button
-              onClick={() => exportToPdf()}
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-900 dark:border-zinc-100 font-mono uppercase tracking-widest text-[11px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            >
-              <Download size={13} strokeWidth={2.5} />
-              Download PDF
-            </button>
+        <div className="w-full lg:w-1/4 flex flex-col gap-0 lg:h-full overflow-y-auto pr-1">
+          <div className="border border-zinc-300 dark:border-zinc-700 bg-white/60 dark:bg-zinc-900/40 flex flex-col">
+            <div className="p-5 border-b border-zinc-300 dark:border-zinc-700">{navActions}</div>
+            <div className="p-5 border-b border-zinc-300 dark:border-zinc-700">{scoreSection}</div>
+            <div className="p-5 border-b border-zinc-300 dark:border-zinc-700">{jdSection}</div>
+            <div className="p-5 border-b border-zinc-300 dark:border-zinc-700">{modeSection}</div>
+            <div className="p-5">{primaryActions}</div>
           </div>
         </div>
       </div>

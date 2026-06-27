@@ -62,9 +62,9 @@ export function ResultsPage() {
   const weaknessesToShow = showAllWeaknesses ? weaknesses : weaknesses.slice(0, 3);
 
   return (
-    <div className="w-full px-6 lg:px-10 pt-6 pb-16 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="w-full px-4 sm:px-6 lg:px-10 pt-4 sm:pt-6 pb-16 animate-in fade-in slide-in-from-bottom-4 duration-500 max-sm:overflow-x-hidden">
       {/* Masthead */}
-      <div className="flex items-center justify-between border-b border-zinc-300 dark:border-zinc-700 pb-3 mb-8 text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">
+      <div className="flex items-center justify-between border-b border-zinc-300 dark:border-zinc-700 pb-3 mb-8 text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400 max-sm:tracking-[0.2em]">
         <span>Issue 01 · ResumeCraft</span>
         <span className="hidden sm:inline">{today}</span>
         <span>Section · Report</span>
@@ -79,8 +79,19 @@ export function ResultsPage() {
       />
 
       {/* Score Story + Bucket Breakdown */}
-      <section className="border border-zinc-300 dark:border-zinc-700 p-6 sm:p-8 mb-10">
+      <section className="border border-zinc-300 dark:border-zinc-700 p-4 sm:p-8 mb-10">
         <ScoreStory before={initialScore} after={finalScore} />
+
+        {/* Mobile: download right after score — no need to scroll to page bottom */}
+        <button
+          type="button"
+          onClick={() => exportToPdf()}
+          className="sm:hidden w-full mt-6 inline-flex items-center justify-center gap-2 px-4 py-3 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-900 dark:border-zinc-100 font-mono uppercase tracking-widest text-[11px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+        >
+          <Download size={14} strokeWidth={2.5} />
+          Download PDF
+        </button>
+
         <BucketBreakdown afterBreakdown={breakdown} beforeBreakdown={beforeBreakdown} />
         <FullBreakdownPanel afterBreakdown={breakdown} beforeBreakdown={beforeBreakdown} />
       </section>
@@ -152,14 +163,14 @@ export function ResultsPage() {
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 mt-12">
         <button
           onClick={() => setAppState('idle')}
-          className="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-xs font-bold transition-colors"
+          className="max-sm:w-full inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-xs font-bold transition-colors"
         >
           Review & Edit
           <ArrowRight size={14} />
         </button>
         <button
           onClick={() => exportToPdf()}
-          className="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-900 dark:border-zinc-100 font-mono uppercase tracking-widest text-xs font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          className="max-sm:w-full inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-900 dark:border-zinc-100 font-mono uppercase tracking-widest text-xs font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
         >
           <Download size={14} />
           Download PDF
@@ -169,7 +180,7 @@ export function ResultsPage() {
             setAppState('idle');
             setCurrentPage('resumes');
           }}
-          className="inline-flex items-center justify-center gap-2 px-5 py-3.5 text-[11px] font-mono uppercase tracking-widest text-zinc-500 hover:text-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-100 transition-colors"
+          className="max-sm:w-full inline-flex items-center justify-center gap-2 px-5 py-3.5 text-[11px] font-mono uppercase tracking-widest text-zinc-500 hover:text-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-100 transition-colors"
         >
           <LayoutGrid size={12} />
           All Resumes

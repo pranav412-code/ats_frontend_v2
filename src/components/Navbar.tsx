@@ -4,9 +4,11 @@ import { useAuthStore } from '../store/useAuthStore';
 import { FileText, Files, History, Home, User, LogOut, CreditCard, Receipt, ChevronDown, Sparkles, Menu, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CreditIndicator } from './CreditIndicator';
+import { resolvePlanDisplay } from '../lib/planDisplay';
+import { APP_VERSION_LABEL } from '../lib/version';
 
 export function Navbar() {
-  const { currentPage, setCurrentPage, subscription } = useResumeStore();
+  const { currentPage, setCurrentPage, subscription, entitlement, creditPacks } = useResumeStore();
   const { signOut } = useAuthStore();
   const [billingOpen, setBillingOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -34,7 +36,7 @@ export function Navbar() {
   ];
 
   const billingActive = currentPage === 'subscription' || currentPage === 'transactions' || currentPage === 'pricing';
-  const planLabel = subscription?.active ? subscription.label : 'Free plan';
+  const plan = resolvePlanDisplay(subscription, entitlement, creditPacks);
 
   return (
     <header className="sticky top-0 z-50 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-300 dark:border-zinc-700">
@@ -51,7 +53,7 @@ export function Navbar() {
                 ResumeCraft
               </span>
               <span className="text-[8px] font-mono uppercase tracking-[0.3em] text-zinc-500 mt-0.5">
-                Beta · v0.1
+                {APP_VERSION_LABEL}
               </span>
             </div>
           </button>
@@ -102,10 +104,10 @@ export function Navbar() {
                 <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 shadow-xl">
                   <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
                     <p className="text-[9px] font-mono uppercase tracking-[0.25em] text-zinc-500 mb-1">Current Plan</p>
-                    <p className="font-serif font-bold text-base text-zinc-900 dark:text-zinc-50">{planLabel}</p>
-                    {subscription?.active && (
+                    <p className="font-serif font-bold text-base text-zinc-900 dark:text-zinc-50">{plan.label}</p>
+                    {plan.isPaid && plan.summary && (
                       <p className="text-[10px] font-mono text-zinc-500 mt-0.5">
-                        {subscription.credits_per_month} cr/mo · {subscription.resume_slots} slots
+                        {plan.summary}
                       </p>
                     )}
                   </div>

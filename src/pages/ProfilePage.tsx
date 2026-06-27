@@ -3,6 +3,7 @@ import { fetchApi } from '../lib/api';
 import { Loader2, Save, User, Briefcase, Phone, Mail, Building, ShieldCheck, ChevronRight, CreditCard } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useResumeStore } from '../store/useResumeStore';
+import { resolvePlanDisplay } from '../lib/planDisplay';
 
 interface ProfileData {
   full_name: string;
@@ -14,7 +15,8 @@ interface ProfileData {
 
 export function ProfilePage() {
   const { user } = useAuthStore();
-  const { setCurrentPage, subscription } = useResumeStore();
+  const { setCurrentPage, subscription, entitlement, creditPacks } = useResumeStore();
+  const plan = resolvePlanDisplay(subscription, entitlement, creditPacks);
   const [profile, setProfile] = useState<ProfileData>({
     full_name: '',
     phone_number: '',
@@ -246,12 +248,10 @@ export function ProfilePage() {
                   Billing
                 </p>
                 <h2 className="font-serif text-lg font-bold text-zinc-900 dark:text-zinc-50 mb-1">
-                  {subscription?.active ? subscription.label : 'Subscription'}
+                  {plan.isPaid ? plan.label : 'Subscription'}
                 </h2>
                 <p className="font-serif italic text-sm text-zinc-600 dark:text-zinc-400">
-                  {subscription?.active
-                    ? `${subscription.credits_per_month} credits/mo · ${subscription.resume_slots} slots · manage plan`
-                    : 'Free plan — view plans and upgrade.'}
+                  {plan.isPaid ? `${plan.details} · manage plan` : 'Free plan — view plans and upgrade.'}
                 </p>
               </div>
             </div>

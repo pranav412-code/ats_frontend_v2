@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useResumeStore } from '../store/useResumeStore';
 import { useAuthStore } from '../store/useAuthStore';
+import { resolvePlanDisplay } from '../lib/planDisplay';
 import {
   FileText, Files, History, ArrowRight, Plus, UploadCloud,
   Coins, FolderOpen, BarChart3, Sparkles, CreditCard, Lock,
@@ -9,10 +10,16 @@ import { cn } from '../lib/utils';
 
 export function HomePage() {
   const {
-    setCurrentPage, resumes, history, credits, entitlement, subscription,
-    createResume, goToUpload, openResume,
+    setCurrentPage, resumes, history, credits, entitlement, subscription, creditPacks,
+    createResume, goToUpload, openResume, fetchSubscription,
   } = useResumeStore();
   const { user } = useAuthStore();
+
+  useEffect(() => {
+    fetchSubscription();
+  }, [fetchSubscription]);
+
+  const plan = resolvePlanDisplay(subscription, entitlement, creditPacks);
 
   const firstName =
     (user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'there')
@@ -102,21 +109,23 @@ export function HomePage() {
           </div>
           <div>
             <p className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-1">Current Plan</p>
-            <h3 className="font-serif text-xl font-bold text-zinc-900 dark:text-zinc-50">
-              {subscription?.active ? subscription.label : 'Free plan'}
+            <h3 className={cn(
+              'font-serif text-xl font-bold text-zinc-900 dark:text-zinc-50',
+              plan.loading && 'animate-pulse text-zinc-400 dark:text-zinc-600'
+            )}>
+              {plan.label}
             </h3>
             <p className="font-serif italic text-sm text-zinc-600 dark:text-zinc-400">
-              {subscription?.active
-                ? `${subscription.credits_per_month} credits/mo · ${subscription.resume_slots} slots · priority`
-                : 'Upgrade for more credits, slots, and priority processing.'}
+              {plan.loading ? 'Loading plan…' : plan.details}
             </p>
           </div>
         </div>
         <button
-          onClick={() => setCurrentPage(subscription?.active ? 'subscription' : 'pricing')}
-          className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-[11px] font-bold transition-colors shrink-0"
+          onClick={() => setCurrentPage(plan.isPaid ? 'subscription' : 'pricing')}
+          disabled={plan.loading}
+          className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-zinc-50 dark:text-zinc-900 font-mono uppercase tracking-widest text-[11px] font-bold transition-colors shrink-0 disabled:opacity-50"
         >
-          {subscription?.active ? 'Manage' : <><Sparkles size={14} /> Upgrade</>}
+          {plan.isPaid ? 'Manage' : <><Sparkles size={14} /> Upgrade</>}
         </button>
       </div>
 

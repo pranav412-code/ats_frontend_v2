@@ -1,5 +1,6 @@
 import React from 'react';
 import { useResumeStore, Page } from '../store/useResumeStore';
+import { APP_VERSION_LABEL } from '../lib/version';
 
 export function Footer() {
   const { setCurrentPage } = useResumeStore();
@@ -51,7 +52,7 @@ export function Footer() {
               ATS-grade resume optimization. Tailored, scored, and refined for every application.
             </p>
             <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-400 mt-4">
-              Beta · v0.1
+              {APP_VERSION_LABEL}
             </p>
           </div>
 

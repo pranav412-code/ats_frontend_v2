@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useResumeStore } from '../store/useResumeStore';
 import { CheckCircle, ArrowRight } from 'lucide-react';
 
 export function PaymentSuccessPage() {
-  const { setCurrentPage } = useResumeStore();
+  const { setCurrentPage, fetchCredits, fetchSubscription, fetchEntitlement } = useResumeStore();
+
+  useEffect(() => {
+    void Promise.all([fetchCredits(), fetchSubscription(), fetchEntitlement()]);
+  }, [fetchCredits, fetchSubscription, fetchEntitlement]);
 
   return (
     <div className="w-full max-w-2xl mx-auto px-6 py-24 flex flex-col items-center text-center">

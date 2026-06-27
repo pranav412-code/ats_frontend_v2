@@ -76,7 +76,7 @@ export function StringPillSection({
             <button
               type="button"
               onClick={() => onRemove(i)}
-              className="absolute -top-1 -right-1 opacity-0 group-hover/pill:opacity-100 bg-red-500 text-white rounded-full p-0.5 shadow-sm hover:bg-red-600 transition-all scale-75 group-hover/pill:scale-100"
+              className="absolute -top-1 -right-1 opacity-100 sm:opacity-0 sm:group-hover/pill:opacity-100 bg-red-500 text-white rounded-full p-0.5 shadow-sm hover:bg-red-600 transition-all scale-100 sm:scale-75 sm:group-hover/pill:scale-100"
               title="Remove"
               aria-label={`Remove ${item || itemPlaceholder}`}
             >

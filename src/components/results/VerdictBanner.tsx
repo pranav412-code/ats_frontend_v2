@@ -31,7 +31,7 @@ export function VerdictBanner({ delta, strengthsCount, durationMs, targetRole }:
       <p className={`text-[10px] font-mono uppercase tracking-[0.3em] mb-3 ${tone.kicker}`}>
         ⟶ Optimization Complete
       </p>
-      <h1 className="font-serif text-5xl sm:text-6xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 leading-[0.95]">
+      <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 leading-[0.95]">
         {v.headline.split('.')[0]}
         {v.headline.includes('.') && (
           <span className="italic font-normal text-zinc-700 dark:text-zinc-300">
@@ -51,7 +51,10 @@ export function VerdictBanner({ delta, strengthsCount, durationMs, targetRole }:
           {formatDuration(durationMs)}
         </span>
         {targetRole && (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 border border-zinc-400 dark:border-zinc-600 text-zinc-600 dark:text-zinc-400 font-mono uppercase tracking-widest text-[10px] max-w-xs truncate">
+          <span
+            className="inline-flex items-center gap-1.5 px-3 py-1 border border-zinc-400 dark:border-zinc-600 text-zinc-600 dark:text-zinc-400 font-mono uppercase tracking-widest text-[10px] max-w-[85vw] sm:max-w-xs truncate"
+            title={targetRole}
+          >
             For: {targetRole}
           </span>
         )}

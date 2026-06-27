@@ -163,6 +163,8 @@ interface ResumeStore {
   optimizationMode: string;
   liveScore: number | null;
   liveScoring: boolean;
+  /** Transient autosave indicator for the inline editor. */
+  autosaveStatus: 'idle' | 'pending' | 'saving' | 'saved' | 'error';
   /** Current credit balance from /profile/credits. null = unknown (not yet fetched). */
   credits: number | null;
   /** True while a /profile/credits request is in flight (avoids UI flicker). */
@@ -298,6 +300,62 @@ function generateId() {
   return Math.random().toString(36).substring(2, 9);
 }
 
+/** Pipe-string backend rows → editable object rows; ensures ids on object rows. */
+function normalizeEditorShape(data: ResumeData): void {
+  const toObjectRows = (arr: any[] | undefined, primary: 'name' | 'title') => {
+    if (!Array.isArray(arr)) return [];
+    return arr.map((item, idx) => {
+      if (typeof item === 'string') {
+        const parts = item.split('|').map((s) => s.trim());
+        return {
+          id: generateId(),
+          [primary]: parts[0] || '',
+          issuer: parts[1] || '',
+          date: parts[2] || '',
+        };
+      }
+      return { ...item, id: item.id || generateId() };
+    });
+  };
+
+  data.certifications = toObjectRows(data.certifications, 'name') as any;
+  data.awards = toObjectRows(data.awards, 'title') as any;
+
+  if (Array.isArray(data.languages)) {
+    data.languages = data.languages.map((item: any) => {
+      if (typeof item === 'string') {
+        const parts = item.split('|').map((s: string) => s.trim());
+        return { id: generateId(), name: parts[0] || '', proficiency: parts[1] || '' };
+      }
+      return { ...item, id: item.id || generateId() };
+    }) as any;
+  }
+}
+
+const SECTION_ORDER_ANCHORS: Record<string, { insertBefore?: string }> = {
+  projects: { insertBefore: 'skills' },
+  certifications: { insertBefore: 'skills' },
+  languages: { insertBefore: 'skills' },
+  awards: { insertBefore: 'skills' },
+};
+
+function ensureSectionInOrder(data: ResumeData, sectionId: string): void {
+  if (!data.sectionOrder) {
+    data.sectionOrder = ['summary', 'experience', 'education'];
+    if (data.projects?.length) data.sectionOrder.push('projects');
+    if (data.customSections) data.sectionOrder.push(...data.customSections.map((s: any) => s.id));
+    data.sectionOrder.push('skills');
+  }
+  if (data.sectionOrder.includes(sectionId)) return;
+  const anchor = SECTION_ORDER_ANCHORS[sectionId];
+  if (anchor?.insertBefore) {
+    const idx = data.sectionOrder.indexOf(anchor.insertBefore);
+    data.sectionOrder.splice(idx >= 0 ? idx : data.sectionOrder.length, 0, sectionId);
+  } else {
+    data.sectionOrder.push(sectionId);
+  }
+}
+
 /**
  * Backend POST /resumes returns the inserted row. Shape can be either:
  *   - list[dict]  (current `execute_non_query(returning=True)` output)
@@ -325,10 +383,16 @@ export function isRealResumeId(id: string | null | undefined): boolean {
  */
 function normalizeToFrontend(data: any): ResumeData {
   if (!data || typeof data !== 'object') return JSON.parse(JSON.stringify(emptyResumeData));
-  // Frontend shape — pass through.
-  if (data.personalInfo) return data as ResumeData;
-  // Backend shape — convertToFrontend reads `basics` etc.
-  return convertToFrontend(data);
+  let result: ResumeData;
+  // Frontend shape — pass through, then normalize list sections.
+  if (data.personalInfo) {
+    result = data as ResumeData;
+  } else {
+    // Backend shape — convertToFrontend reads `basics` etc.
+    result = convertToFrontend(data);
+  }
+  normalizeEditorShape(result);
+  return result;
 }
 
 const HISTORY_CAP = 100;
@@ -365,19 +429,31 @@ function dedupHistory(arr: OptimizationRun[]): OptimizationRun[] {
  *    operation.
  */
 let _autosaveTimer: number | null = null;
+let _autosaveSavedTimer: number | null = null;
 const AUTOSAVE_DEBOUNCE_MS = 1500;
 
+type AutosaveSetter = (status: 'idle' | 'pending' | 'saving' | 'saved' | 'error') => void;
+
 function scheduleAutosave(
-  getState: () => { currentResumeId: string | null; resumeData: ResumeData | null; resumes: Resume[] }
+  getState: () => { currentResumeId: string | null; resumeData: ResumeData | null; resumes: Resume[] },
+  setAutosaveStatus: AutosaveSetter,
 ) {
   if (typeof window === 'undefined') return;
   if (_autosaveTimer !== null) window.clearTimeout(_autosaveTimer);
+  setAutosaveStatus('pending');
   _autosaveTimer = window.setTimeout(async () => {
     _autosaveTimer = null;
     const { currentResumeId, resumeData, resumes } = getState();
-    if (!currentResumeId || !resumeData) return;
-    if (!isRealResumeId(currentResumeId)) return; // still optimistic
+    if (!currentResumeId || !resumeData) {
+      setAutosaveStatus('idle');
+      return;
+    }
+    if (!isRealResumeId(currentResumeId)) {
+      setAutosaveStatus('idle');
+      return;
+    }
     const snapshot = resumes.find(r => r.id === currentResumeId)?.backendSnapshot;
+    setAutosaveStatus('saving');
     try {
       await fetchApi(`/resumes/${currentResumeId}`, {
         method: 'PATCH',
@@ -385,8 +461,15 @@ function scheduleAutosave(
           optimized_data: convertToBackend(resumeData, snapshot),
         }),
       });
+      setAutosaveStatus('saved');
+      if (_autosaveSavedTimer !== null) window.clearTimeout(_autosaveSavedTimer);
+      _autosaveSavedTimer = window.setTimeout(() => {
+        _autosaveSavedTimer = null;
+        setAutosaveStatus('idle');
+      }, 2000);
     } catch (e) {
       console.error('Autosave failed', e);
+      setAutosaveStatus('error');
     }
   }, AUTOSAVE_DEBOUNCE_MS);
 }
@@ -430,6 +513,7 @@ export const useResumeStore = create<ResumeStore>()(
   optimizationMode: 'balanced',
   liveScore: null,
   liveScoring: false,
+  autosaveStatus: 'idle' as const,
   credits: null,
   creditsLoading: false,
   creditPacks: null,
@@ -617,6 +701,10 @@ export const useResumeStore = create<ResumeStore>()(
       window.clearTimeout(_autosaveTimer);
       _autosaveTimer = null;
     }
+    if (_autosaveSavedTimer !== null && typeof window !== 'undefined') {
+      window.clearTimeout(_autosaveSavedTimer);
+      _autosaveSavedTimer = null;
+    }
     try {
       localStorage.removeItem('resume-store');
     } catch {
@@ -637,6 +725,7 @@ export const useResumeStore = create<ResumeStore>()(
       optimizationMode: 'balanced',
       liveScore: null,
       liveScoring: false,
+      autosaveStatus: 'idle',
       credits: null,
       creditsLoading: false,
       creditPacks: null,
@@ -854,9 +943,11 @@ export const useResumeStore = create<ResumeStore>()(
   openResume: (id) => {
     const resume = get().resumes.find(r => r.id === id);
     if (resume) {
+      const data = JSON.parse(JSON.stringify(resume.data)) as ResumeData;
+      normalizeEditorShape(data);
       set({
         currentResumeId: id,
-        resumeData: JSON.parse(JSON.stringify(resume.data)),
+        resumeData: data,
         currentPage: 'editor',
         appState: 'idle',
         optimizationResult: null,
@@ -891,7 +982,8 @@ export const useResumeStore = create<ResumeStore>()(
     set((state) => {
       if (!state.resumeData) return state;
 
-      const newData = JSON.parse(JSON.stringify(state.resumeData));
+      const newData = JSON.parse(JSON.stringify(state.resumeData)) as ResumeData;
+      normalizeEditorShape(newData);
 
       // If touching skills, ensure flat-array shape before mutation.
       if (path[0] === 'skills') ensureSkillsCategorized(newData);
@@ -922,7 +1014,7 @@ export const useResumeStore = create<ResumeStore>()(
 
       return { resumeData: newData, resumes: updatedResumes };
     });
-    scheduleAutosave(get);
+    scheduleAutosave(get, (status) => set({ autosaveStatus: status }));
   },
 
   addBullet: (sectionType, sectionIndex, customItemIndex) => {
@@ -960,7 +1052,7 @@ export const useResumeStore = create<ResumeStore>()(
       
       return { resumeData: newData, resumes: updatedResumes };
     });
-    scheduleAutosave(get);
+    scheduleAutosave(get, (status) => set({ autosaveStatus: status }));
   },
 
   deleteBullet: (sectionType, sectionIndex, bulletIndex, customItemIndex) => {
@@ -989,7 +1081,7 @@ export const useResumeStore = create<ResumeStore>()(
       
       return { resumeData: newData, resumes: updatedResumes };
     });
-    scheduleAutosave(get);
+    scheduleAutosave(get, (status) => set({ autosaveStatus: status }));
   },
 
   addSection: (type) => {
@@ -1076,7 +1168,7 @@ export const useResumeStore = create<ResumeStore>()(
       
       return { resumeData: newData, resumes: updatedResumes };
     });
-    scheduleAutosave(get);
+    scheduleAutosave(get, (status) => set({ autosaveStatus: status }));
   },
 
   removeSection: (sectionId) => {
@@ -1127,7 +1219,7 @@ export const useResumeStore = create<ResumeStore>()(
         : state.resumes;
       return { resumeData: newData, resumes: updatedResumes };
     });
-    scheduleAutosave(get);
+    scheduleAutosave(get, (status) => set({ autosaveStatus: status }));
   },
 
   removeItem: (sectionType, itemIndex, customSectionIndex) => {
@@ -1151,14 +1243,15 @@ export const useResumeStore = create<ResumeStore>()(
         : state.resumes;
       return { resumeData: newData, resumes: updatedResumes };
     });
-    scheduleAutosave(get);
+    scheduleAutosave(get, (status) => set({ autosaveStatus: status }));
   },
 
   addItem: (sectionType, customSectionIndex) => {
     set((state) => {
       if (!state.resumeData) return state;
-      const newData = JSON.parse(JSON.stringify(state.resumeData));
+      const newData = JSON.parse(JSON.stringify(state.resumeData)) as ResumeData;
       if (sectionType === 'skills') ensureSkillsCategorized(newData);
+      normalizeEditorShape(newData);
 
       const SIMPLE_SECTIONS: Record<string, () => any> = {
         experience:     () => ({ id: generateId(), role: "New Role", company: "Company", date: "Date", bullets: [""] }),
@@ -1189,6 +1282,7 @@ export const useResumeStore = create<ResumeStore>()(
         if (!Array.isArray(newData[sectionType])) {
           newData[sectionType] = [];
         }
+        ensureSectionInOrder(newData, sectionType);
         newData[sectionType].push(SIMPLE_SECTIONS[sectionType]());
       }
 
@@ -1199,7 +1293,7 @@ export const useResumeStore = create<ResumeStore>()(
         : state.resumes;
       return { resumeData: newData, resumes: updatedResumes };
     });
-    scheduleAutosave(get);
+    scheduleAutosave(get, (status) => set({ autosaveStatus: status }));
   },
 
   reorderSections: (startIndex, endIndex) => {
@@ -1236,7 +1330,7 @@ export const useResumeStore = create<ResumeStore>()(
 
       return { resumeData: newData, resumes: updatedResumes };
     });
-    scheduleAutosave(get);
+    scheduleAutosave(get, (status) => set({ autosaveStatus: status }));
   },
 
   startOptimization: () => set((state) => ({
@@ -1458,7 +1552,9 @@ function _eduAnchorMatch(snap: any, fe: any): boolean {
 }
 
 export function convertToBackend(frontendData: ResumeData, snapshot?: any): any {
-  const personalInfo = frontendData.personalInfo || { name: "", email: "", phone: "", location: "", links: [] };
+  const data = JSON.parse(JSON.stringify(frontendData)) as ResumeData;
+  normalizeEditorShape(data);
+  const personalInfo = data.personalInfo || { name: "", email: "", phone: "", location: "", links: [] };
   const links = personalInfo.links || [];
 
   const snapExp: any[] = Array.isArray(snapshot?.experience) ? snapshot.experience : [];
@@ -1476,8 +1572,8 @@ export function convertToBackend(frontendData: ResumeData, snapshot?: any): any 
       // Full link list — preserves arbitrary URLs (portfolio, Behance, Twitter, etc.)
       links,
     },
-    summary: frontendData.summary || "",
-    experience: (frontendData.experience || []).map((exp: any, i: number) => {
+    summary: data.summary || "",
+    experience: (data.experience || []).map((exp: any, i: number) => {
       const [startDate = "", endDate = ""] = (exp.date || "").split("-").map((s: string) => s.trim());
       const snap = snapExp[i];
       const matched = snap && _expAnchorMatch(snap, exp);
@@ -1491,7 +1587,7 @@ export function convertToBackend(frontendData: ResumeData, snapshot?: any): any 
         technologies: matched && Array.isArray(snap.technologies) ? snap.technologies : []
       };
     }),
-    education: (frontendData.education || []).map((edu: any, i: number) => {
+    education: (data.education || []).map((edu: any, i: number) => {
       const [startDate = "", endDate = ""] = (edu.date || "").split("-").map((s: string) => s.trim());
       const snap = snapEdu[i];
       const matched = snap && _eduAnchorMatch(snap, edu);
@@ -1504,7 +1600,7 @@ export function convertToBackend(frontendData: ResumeData, snapshot?: any): any 
         location: matched ? (snap.location || "") : ""
       };
     }),
-    projects: (frontendData.projects || []).map((proj: any) => {
+    projects: (data.projects || []).map((proj: any) => {
       return {
         title: proj.title || "",
         date: proj.date || "",
@@ -1513,25 +1609,25 @@ export function convertToBackend(frontendData: ResumeData, snapshot?: any): any 
         technologies: proj.technologies || []
       };
     }),
-    certifications: (frontendData.certifications || []).map(c =>
+    certifications: (data.certifications || []).map((c: any) =>
       [c.name, c.issuer, c.date].filter(Boolean).join(" | ")
     ).filter(Boolean),
-    languages: (frontendData.languages || []).map(l =>
+    languages: (data.languages || []).map((l: any) =>
       [l.name, l.proficiency].filter(Boolean).join(" | ")
     ).filter(Boolean),
-    awards: (frontendData.awards || []).map(a =>
+    awards: (data.awards || []).map((a: any) =>
       [a.title, a.issuer, a.date].filter(Boolean).join(" | ")
     ).filter(Boolean),
-    hobbies: frontendData.hobbies || [],
-    interests: frontendData.interests || [],
-    volunteer: frontendData.volunteer || [],
+    hobbies: data.hobbies || [],
+    interests: data.interests || [],
+    volunteer: data.volunteer || [],
     skills: {
-      technical: frontendData.skills?.technical || [],
-      soft: frontendData.skills?.soft || [],
-      tools: frontendData.skills?.tools || []
+      technical: data.skills?.technical || [],
+      soft: data.skills?.soft || [],
+      tools: data.skills?.tools || []
     },
-    custom_sections: frontendData.customSections || [],
-    section_order: frontendData.sectionOrder || [],
+    custom_sections: data.customSections || [],
+    section_order: data.sectionOrder || [],
     other: ""
   };
 }
@@ -1612,6 +1708,7 @@ export function convertToFrontend(backendData: any): ResumeData {
     hobbies: backendData?.hobbies || [],
     interests: backendData?.interests || [],
     volunteer: backendData?.volunteer || [],
-    customSections: backendData?.custom_sections || []
+    customSections: backendData?.custom_sections || [],
+    sectionOrder: backendData?.section_order || [],
   };
 }

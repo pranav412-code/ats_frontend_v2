@@ -27,6 +27,7 @@ interface Props {
   onRemove: (index: number) => void;
   onFieldUpdate: (index: number, field: string, value: string) => void;
   onEditStateChange?: (isEditing: boolean) => void;
+  autoFocusItemId?: string | null;
 }
 
 /**
@@ -44,6 +45,7 @@ export function ObjectCardSection({
   onRemove,
   onFieldUpdate,
   onEditStateChange,
+  autoFocusItemId,
 }: Props) {
   const isEmpty = items.length === 0;
 
@@ -69,7 +71,7 @@ export function ObjectCardSection({
               <button
                 type="button"
                 onClick={() => onRemove(i)}
-                className="absolute right-1 sm:-right-6 top-1 translate-x-2 opacity-0 group-hover/item:translate-x-0 group-hover/item:opacity-100 transition-all text-zinc-400 hover:text-red-500 p-1"
+                className="absolute right-1 sm:-right-6 top-1 translate-x-0 sm:translate-x-2 opacity-60 sm:opacity-0 sm:group-hover/item:translate-x-0 sm:group-hover/item:opacity-100 transition-all text-zinc-400 hover:text-red-500 p-1"
                 title="Delete"
                 aria-label={`Delete ${item[fields.primary] || placeholders.primary}`}
               >
@@ -82,6 +84,7 @@ export function ObjectCardSection({
                   className="font-medium flex-1"
                   placeholder={placeholders.primary}
                   onEditStateChange={onEditStateChange}
+                  startEditing={item.id === autoFocusItemId}
                 />
                 {fields.date && (
                   <StructuredDateInput

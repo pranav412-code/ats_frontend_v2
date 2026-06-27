@@ -66,6 +66,9 @@ export function ResumePreview() {
       if (sectionType === 'experience') arr = data.experience;
       else if (sectionType === 'education') arr = data.education;
       else if (sectionType === 'projects') arr = data.projects;
+      else if (sectionType === 'certifications') arr = data.certifications;
+      else if (sectionType === 'awards') arr = data.awards;
+      else if (sectionType === 'languages') arr = data.languages;
       else if (sectionType === 'customSections' && customSectionIndex !== undefined)
         arr = data.customSections?.[customSectionIndex]?.items;
       const last = arr && arr.length > 0 ? arr[arr.length - 1] : null;
@@ -134,6 +137,11 @@ export function ResumePreview() {
     'hobbies', 'interests', 'volunteer',
   ]);
 
+  const visibleSectionOrder = sectionOrder.filter((sectionId) => {
+    if (KNOWN_SECTIONS.has(sectionId)) return true;
+    return !!customSections?.some((s) => s.id === sectionId);
+  });
+
   // Bullets in experience/projects/customSections render as one multiline
   // textarea per entry (value = bullets.join('\n')). Per-bullet add/delete
   // navigation is handled inside InlineEditableText's auto-bullet logic.
@@ -142,10 +150,12 @@ export function ResumePreview() {
     if (!result.destination) return;
     const { source, destination } = result;
     if (source.index === destination.index) return;
-    const newOrder = Array.from(sectionOrder);
+    const newOrder = Array.from(visibleSectionOrder);
     const [removed] = newOrder.splice(source.index, 1);
     newOrder.splice(destination.index, 0, removed);
-    updateResumeField(['sectionOrder'], newOrder);
+    // Preserve any unknown ids that were filtered out of the drag list.
+    const unknown = sectionOrder.filter((id) => !visibleSectionOrder.includes(id));
+    updateResumeField(['sectionOrder'], [...newOrder, ...unknown]);
   };
 
   return (
@@ -203,7 +213,7 @@ export function ResumePreview() {
                     newLinks.splice(linkIndex, 1);
                     updateResumeField(['personalInfo', 'links'], newLinks);
                   }}
-                  className="absolute -right-4 opacity-0 group-hover/link:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity"
+                  className="absolute -right-4 opacity-60 sm:opacity-0 sm:group-hover/link:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity"
                   title="Remove link"
                 >
                   <X size={12} />
@@ -217,7 +227,7 @@ export function ResumePreview() {
               const newLinks = [...(personalInfo.links || []), ""];
               updateResumeField(['personalInfo', 'links'], newLinks);
             }}
-            className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-500 ml-2"
+            className="opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center w-5 h-5 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-500 ml-2"
             title="Add link"
           >
             <Plus size={12} />
@@ -229,7 +239,7 @@ export function ResumePreview() {
         <Droppable droppableId="resume-sections">
           {(provided) => (
             <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-4">
-              {sectionOrder.map((sectionId, index) => {
+              {visibleSectionOrder.map((sectionId, index) => {
                 const customSectionIndex = customSections?.findIndex(s => s.id === sectionId) ?? -1;
                 const customSection = customSectionIndex >= 0 ? customSections![customSectionIndex] : null;
 
@@ -252,14 +262,14 @@ export function ResumePreview() {
                         >
                         <div
                           {...provided.dragHandleProps}
-                          className="absolute left-1 sm:left-2 top-3 p-1 -translate-x-2 opacity-0 group-hover/section:translate-x-0 group-hover/section:opacity-100 transition-all cursor-grab text-zinc-400 hover:text-zinc-600 active:cursor-grabbing"
+                          className="absolute left-1 sm:left-2 top-3 p-1 translate-x-0 sm:-translate-x-2 opacity-40 sm:opacity-0 sm:group-hover/section:translate-x-0 sm:group-hover/section:opacity-100 transition-all cursor-grab text-zinc-400 hover:text-zinc-600 active:cursor-grabbing"
                         >
                           <GripVertical size={16} />
                         </div>
                         
                         <button
                           onClick={() => setPendingSectionDelete(sectionId)}
-                          className="absolute right-1 sm:right-2 top-3 p-1 translate-x-2 opacity-0 group-hover/section:translate-x-0 group-hover/section:opacity-100 transition-all cursor-pointer text-zinc-400 hover:text-red-500"
+                          className="absolute right-1 sm:right-2 top-3 p-1 translate-x-0 sm:translate-x-2 opacity-60 sm:opacity-0 sm:group-hover/section:translate-x-0 sm:group-hover/section:opacity-100 transition-all cursor-pointer text-zinc-400 hover:text-red-500"
                           title="Delete section"
                         >
                           <Trash2 size={16} />
@@ -297,7 +307,7 @@ export function ResumePreview() {
                                     <div key={exp.id} className="group/item relative px-7 sm:-mx-8 sm:px-8 py-2 -my-2 rounded-md hover:bg-zinc-50/30 dark:hover:bg-zinc-800/20">
                                       <button
                                         onClick={() => setPendingItemDelete({ sectionType: 'experience', itemIndex: expIndex, label: 'job' })}
-                                        className="absolute right-1 sm:right-2 top-2 opacity-0 group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
+                                        className="absolute right-1 sm:right-2 top-2 opacity-60 sm:opacity-0 sm:group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
                                         title="Delete job"
                                       >
                                         <Trash2 size={14} />
@@ -330,7 +340,7 @@ export function ResumePreview() {
                                     
                                     <div className="mt-2 relative group/bullet">
                                       <InlineEditableText
-                                        value={exp.bullets.join('\n')}
+                                        value={(exp.bullets || []).join('\n')}
                                         onSave={(v) => {
                                           const newBullets = v.split('\n').map(b => b.trimEnd()).filter(b => b.trim().length > 0);
                                           updateResumeField(['experience', expIndex, 'bullets'], newBullets);
@@ -373,7 +383,7 @@ export function ResumePreview() {
                                   <div key={edu.id} className="group/item relative px-7 sm:-mx-8 sm:px-8 py-2 -my-2 rounded-md hover:bg-zinc-50/30 dark:hover:bg-zinc-800/20">
                                     <button
                                       onClick={() => setPendingItemDelete({ sectionType: 'education', itemIndex: eduIndex, label: 'school' })}
-                                      className="absolute right-1 sm:right-2 top-2 opacity-0 group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
+                                      className="absolute right-1 sm:right-2 top-2 opacity-60 sm:opacity-0 sm:group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
                                       title="Delete school"
                                     >
                                       <Trash2 size={14} />
@@ -435,7 +445,7 @@ export function ResumePreview() {
                                   <div key={proj.id} className="group/item relative px-7 sm:-mx-8 sm:px-8 py-2 -my-2 rounded-md hover:bg-zinc-50/30 dark:hover:bg-zinc-800/20">
                                     <button
                                       onClick={() => setPendingItemDelete({ sectionType: 'projects', itemIndex: projIndex, label: 'project' })}
-                                      className="absolute right-1 sm:right-2 top-2 opacity-0 group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
+                                      className="absolute right-1 sm:right-2 top-2 opacity-60 sm:opacity-0 sm:group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
                                       title="Delete project"
                                     >
                                       <Trash2 size={14} />
@@ -461,7 +471,7 @@ export function ResumePreview() {
                                     
                                     <div className="mt-2 relative group/bullet">
                                       <InlineEditableText
-                                        value={proj.bullets.join('\n')}
+                                        value={(proj.bullets || []).join('\n')}
                                         onSave={(v) => {
                                           const newBullets = v.split('\n').map(b => b.trimEnd()).filter(b => b.trim().length > 0);
                                           updateResumeField(['projects', projIndex, 'bullets'], newBullets);
@@ -555,7 +565,7 @@ export function ResumePreview() {
                                   <div key={item.id} className="group/item relative px-7 sm:-mx-8 sm:px-8 py-2 -my-2 rounded-md hover:bg-zinc-50/30 dark:hover:bg-zinc-800/20">
                                     <button
                                       onClick={() => setPendingItemDelete({ sectionType: 'customSections', itemIndex, customSectionIndex, label: 'item' })}
-                                      className="absolute right-1 sm:right-2 top-2 opacity-0 group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
+                                      className="absolute right-1 sm:right-2 top-2 opacity-60 sm:opacity-0 sm:group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
                                       title="Delete item"
                                     >
                                       <Trash2 size={14} />
@@ -588,7 +598,7 @@ export function ResumePreview() {
                                     
                                     <div className="mt-2 relative group/bullet">
                                       <InlineEditableText
-                                        value={item.bullets.join('\n')}
+                                        value={(item.bullets || []).join('\n')}
                                         onSave={(v) => {
                                           const newBullets = v.split('\n').map(b => b.trimEnd()).filter(b => b.trim().length > 0);
                                           updateResumeField(['customSections', customSectionIndex, 'items', itemIndex, 'bullets'], newBullets);
@@ -665,8 +675,9 @@ export function ResumePreview() {
                             fields={{ primary: 'name', secondary: 'issuer', date: 'date' }}
                             placeholders={{ primary: 'Certification Name', secondary: 'Issuing Organization', date: 'Date' }}
                             addLabel="Add certification"
-                            onAdd={() => addSection('certifications')}
-                            onRemove={(i) => removeItem('certifications', i)}
+                            onAdd={() => addItemAndFocus('certifications')}
+                            autoFocusItemId={autoFocusItemId}
+                            onRemove={(i) => setPendingItemDelete({ sectionType: 'certifications', itemIndex: i, label: 'certification' })}
                             onFieldUpdate={(i, field, v) => updateResumeField(['certifications', i, field], v)}
                             onEditStateChange={handleEditStateChange}
                           />
@@ -679,8 +690,9 @@ export function ResumePreview() {
                             fields={{ primary: 'title', secondary: 'issuer', date: 'date' }}
                             placeholders={{ primary: 'Award Name', secondary: 'Awarding Body', date: 'Date' }}
                             addLabel="Add award"
-                            onAdd={() => addSection('awards')}
-                            onRemove={(i) => removeItem('awards', i)}
+                            onAdd={() => addItemAndFocus('awards')}
+                            autoFocusItemId={autoFocusItemId}
+                            onRemove={(i) => setPendingItemDelete({ sectionType: 'awards', itemIndex: i, label: 'award' })}
                             onFieldUpdate={(i, field, v) => updateResumeField(['awards', i, field], v)}
                             onEditStateChange={handleEditStateChange}
                           />
@@ -694,7 +706,7 @@ export function ResumePreview() {
                             {languages.length === 0 ? (
                               <button
                                 type="button"
-                                onClick={() => addSection('languages')}
+                                onClick={() => addItemAndFocus('languages')}
                                 className="inline-flex items-center gap-1.5 text-sm italic text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
                               >
                                 <Plus size={12} /> Add language
@@ -705,8 +717,8 @@ export function ResumePreview() {
                                   <div key={lang.id ?? i} className="group/item flex items-baseline gap-2 relative px-7 sm:px-0">
                                     <button
                                       type="button"
-                                      onClick={() => removeItem('languages', i)}
-                                      className="absolute right-1 sm:-right-6 top-0.5 opacity-0 group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
+                                      onClick={() => setPendingItemDelete({ sectionType: 'languages', itemIndex: i, label: 'language' })}
+                                      className="absolute right-1 sm:-right-6 top-0.5 opacity-60 sm:opacity-0 sm:group-hover/item:opacity-100 text-zinc-400 hover:text-red-500 transition-opacity p-1"
                                       title="Remove language"
                                     >
                                       <Trash2 size={14} />
@@ -717,6 +729,7 @@ export function ResumePreview() {
                                       className="text-sm font-medium"
                                       placeholder="Language"
                                       onEditStateChange={handleEditStateChange}
+                                      startEditing={lang.id === autoFocusItemId}
                                     />
                                     <span className="text-zinc-400">·</span>
                                     <InlineEditableText
@@ -730,7 +743,7 @@ export function ResumePreview() {
                                 ))}
                                 <button
                                   type="button"
-                                  onClick={() => addSection('languages')}
+                                  onClick={() => addItemAndFocus('languages')}
                                   className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 px-2 py-1 mt-1 border border-dashed border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 rounded-md transition-colors"
                                 >
                                   <Plus size={12} /> Add language
@@ -857,6 +870,7 @@ function BottomAddNav({ onAdd, currentSections }: { onAdd: (type: string) => voi
     { key: 'education', label: 'Education' },
     { key: 'projects', label: 'Projects' },
     { key: 'skills', label: 'Skills' },
+    { key: 'hobbies', label: 'Hobbies' },
   ].filter(p => !currentSections.includes(p.key));
 
   primary.push({ key: 'custom', label: 'Custom' });
@@ -866,7 +880,6 @@ function BottomAddNav({ onAdd, currentSections }: { onAdd: (type: string) => voi
     { key: 'awards', label: 'Awards' },
     { key: 'languages', label: 'Languages' },
     { key: 'volunteer', label: 'Volunteer' },
-    { key: 'hobbies', label: 'Hobbies' },
     { key: 'interests', label: 'Interests' },
   ].filter(p => !currentSections.includes(p.key));
 

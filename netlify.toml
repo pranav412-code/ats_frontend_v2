@@ -1,0 +1,18 @@
+# ResumeCraft app (Vite SPA) — https://app.resumecraft.site
+# Netlify: set "Base directory" to ats_frontend_v2 if deploying from monorepo root.
+
+[build]
+  command = "npm run build:production"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # Public client vars — safe to inline at build time.
+  VITE_API_URL = "https://resume-craft-backend-1r57.onrender.com"
+  SECRETS_SCAN_OMIT_KEYS = "VITE_API_URL,VITE_SUPABASE_URL,VITE_SUPABASE_ANON_KEY,VITE_RAZORPAY_KEY_ID"
+
+# SPA client-side routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

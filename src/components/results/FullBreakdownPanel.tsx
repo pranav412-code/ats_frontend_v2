@@ -39,7 +39,7 @@ export function FullBreakdownPanel({ afterBreakdown, beforeBreakdown }: Props) {
           >
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-6 mt-5 pt-5 border-t border-zinc-300 dark:border-zinc-700">
               {/* Radar */}
-              <div className="flex items-center justify-center">
+              <div className="flex items-center justify-center max-sm:overflow-hidden max-sm:px-1">
                 <div className="w-full max-w-sm">
                   <SimpleRadar dimensions={dims.map((d) => ({ label: d.label, before: d.before, after: d.after }))} size={300} />
                   <div className="flex items-center justify-center gap-4 mt-3 text-[10px] font-mono uppercase tracking-widest">
