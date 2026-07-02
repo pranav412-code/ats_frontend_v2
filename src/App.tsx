@@ -18,6 +18,7 @@ import { PaymentFailedPage } from './pages/PaymentFailedPage';
 import { TransactionHistoryPage } from './pages/TransactionHistoryPage';
 import { useAuthStore } from './store/useAuthStore';
 import { Toaster } from './components/Toaster';
+import { FeedbackWidget } from './components/FeedbackWidget';
 import { PrivacyPolicyPage } from './pages/legal/PrivacyPolicyPage';
 import { TermsPage } from './pages/legal/TermsPage';
 import { RefundPolicyPage } from './pages/legal/RefundPolicyPage';
@@ -88,6 +89,7 @@ export default function App() {
       
       <Footer />
       <Toaster />
+      <FeedbackWidget />
     </div>
   );
 }
